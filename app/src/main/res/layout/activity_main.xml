@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/main"
+    android:background="#000"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context=".MainActivity">
+
+    <FrameLayout
+        android:id="@+id/cameraPreview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <LinearLayout
+        android:id="@+id/permissionLayout"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:id="@+id/tvPermission"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Allow Camera Permission"
+            android:textColor="#fff" />
+
+        <Button
+            android:id="@+id/btnAllow"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Allow" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tvRecognition"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:padding="8dp"
+        android:textColor="#FFF"
+        android:textSize="16sp"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/tvCounts"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="#550000FF"
+        android:layout_marginStart="12dp"
+        android:layout_marginTop="12dp"
+        android:padding="8dp"
+        android:textColor="#FFF"
+        android:textSize="16sp"
+        android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/tvRecognition" />
+
+    <TextView
+        android:id="@+id/tvExpressions"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="#550000FF"
+        android:layout_marginStart="12dp"
+        android:padding="8dp"
+        android:textColor="#FFF"
+        android:textSize="16sp"
+        android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/tvCounts"
+        tools:text="Neutral: 0\nHappy: 0\nSurprised: 0\nSad: 0\nAnger: 0\nFear: 0" />
+
+    <TextView
+        android:id="@+id/tvGenders"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="#550000FF"
+        android:layout_marginStart="12dp"
+        android:padding="8dp"
+        android:textColor="#FFF"
+        android:textSize="16sp"
+        android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/tvExpressions"
+        tools:text="Male: 0\nFemale: 0" />
+
+    <TextView
+        android:id="@+id/tvAgeGroups"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="#550000FF"
+        android:layout_marginStart="12dp"
+        android:padding="8dp"
+        android:textColor="#FFF"
+        android:textSize="16sp"
+        android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/tvGenders"
+        tools:text="Child (0-12): 0\nTeen (13-19): 0\nYoung Adult (20-28): 0\nAdult (29-55): 0\nElderly (56+): 0" />
+
+    <TextView
+        android:id="@+id/tvStoredGenders"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="#550000FF"
+        android:layout_marginEnd="12dp"
+        android:layout_marginTop="12dp"
+        android:padding="8dp"
+        android:textColor="#FFF"
+        android:textSize="16sp"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/tvRecognition"
+        tools:text="Stored Male: 0\nStored Female: 0" />
+
+    <TextView
+        android:id="@+id/tvStoredAgeGroups"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="#550000FF"
+        android:layout_marginEnd="12dp"
+        android:padding="8dp"
+        android:textColor="#FFF"
+        android:textSize="16sp"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/tvStoredGenders"
+        tools:text="Child (0-12): 0\nTeen (13-19): 0\nYoung Adult (20-28): 0\nAdult (29-55): 0\nElderly (56+): 0" />
+
+    <TextView
+        android:id="@+id/tvStoredExpressions"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="#550000FF"
+        android:layout_marginEnd="12dp"
+        android:padding="8dp"
+        android:textColor="#FFF"
+        android:textSize="16sp"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/tvStoredAgeGroups"
+        tools:text="Neutral: 0%\nHappy: 0%\nSurprised: 0%\nSad: 0%\nAnger: 0%\nFear: 0%" />
+
+    <TextView
+        android:id="@+id/tvMetrics"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:padding="8dp"
+        android:textColor="#FFF"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/btnClearCounts"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <ImageButton
+        android:id="@+id/btnSwitchCamera"
+        android:layout_width="60dp"
+        android:layout_height="60dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="12dp"
+        android:visibility="gone"
+        android:background="@android:color/transparent"
+        android:contentDescription="Switch Camera"
+        android:src="@android:drawable/ic_menu_camera"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent" />
+
+    <Button
+        android:id="@+id/btnClearCounts"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="12dp"
+        android:text="Clear Counts"
+        android:textColor="@android:color/white"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

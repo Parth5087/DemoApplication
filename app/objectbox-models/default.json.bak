@@ -1,0 +1,97 @@
+{
+  "_note1": "KEEP THIS FILE! Check it into a version control system (VCS) like git.",
+  "_note2": "ObjectBox manages crucial IDs for your object model. See docs for details.",
+  "_note3": "If you have VCS merge conflicts, you must resolve them according to ObjectBox docs.",
+  "entities": [
+    {
+      "id": "1:6022793439182419491",
+      "lastPropertyId": "7:6622320864059482540",
+      "name": "FaceImageRecord",
+      "properties": [
+        {
+          "id": "1:765445784482171042",
+          "name": "recordID",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:5064087854426552591",
+          "name": "personID",
+          "indexId": "1:3488446628281394946",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "3:1868589889851564094",
+          "name": "personName",
+          "type": 9
+        },
+        {
+          "id": "4:7426274957998521752",
+          "name": "faceEmbedding",
+          "indexId": "2:2701482259654596797",
+          "type": 28,
+          "flags": 8
+        },
+        {
+          "id": "5:5847908775311266384",
+          "name": "gender",
+          "type": 9
+        },
+        {
+          "id": "6:825475833582413223",
+          "name": "ageGroup",
+          "type": 9
+        },
+        {
+          "id": "7:6622320864059482540",
+          "name": "expression",
+          "indexId": "3:3740748471272127177",
+          "type": 9,
+          "flags": 2048
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "2:5322169677917956621",
+      "lastPropertyId": "4:200102630707254336",
+      "name": "PersonRecord",
+      "properties": [
+        {
+          "id": "1:1297539862110468859",
+          "name": "personID",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:8860051751103225530",
+          "name": "personName",
+          "type": 9
+        },
+        {
+          "id": "3:3130818954237790052",
+          "name": "numImages",
+          "type": 6
+        },
+        {
+          "id": "4:200102630707254336",
+          "name": "addTime",
+          "type": 6
+        }
+      ],
+      "relations": []
+    }
+  ],
+  "lastEntityId": "2:5322169677917956621",
+  "lastIndexId": "3:3740748471272127177",
+  "lastRelationId": "0:0",
+  "lastSequenceId": "0:0",
+  "modelVersion": 5,
+  "modelVersionParserMinimum": 5,
+  "retiredEntityUids": [],
+  "retiredIndexUids": [],
+  "retiredPropertyUids": [],
+  "retiredRelationUids": [],
+  "version": 1
+}
