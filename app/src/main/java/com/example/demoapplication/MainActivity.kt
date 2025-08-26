@@ -200,7 +200,6 @@ class MainActivity : AppCompatActivity() {
         )
         cameraPreview.addView(faceDetectionOverlay)
 //        startTestSendingEveryMinute()
-        startForegroundService(Intent(this, UsbCameraWatcherService::class.java))
 
     }
 }

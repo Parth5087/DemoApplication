@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Class 0x0E = Video -->
-    <usb-device class="14" />
+    <!-- Optional association descriptor -->
+    <usb-device class="239" subclass="2" protocol="1" />
+    <!-- USB Video Class -->
+    <usb-interface class="14" />
 </resources>
