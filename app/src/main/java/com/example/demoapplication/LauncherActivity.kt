@@ -3,8 +3,6 @@ package com.example.demoapplication
 import android.content.Intent
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
-import com.example.demoapplication.services.CameraService
 import com.example.demoapplication.services.NetworkModule
 
 class LauncherActivity : AppCompatActivity() {

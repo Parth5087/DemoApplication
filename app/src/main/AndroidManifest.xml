@@ -49,11 +49,6 @@
             </intent-filter>
         </activity>
 
-        <service
-            android:name=".services.CameraService"
-            android:foregroundServiceType="camera|dataSync"
-            android:exported="false"/>
-
     </application>
 
 </manifest>
