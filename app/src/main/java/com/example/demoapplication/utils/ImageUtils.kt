@@ -155,19 +155,6 @@ object ImageUtils {
         }
     }
 
-    fun zipFiles(files: List<File>, zipFile: File) {
-        ZipOutputStream(BufferedOutputStream(FileOutputStream(zipFile))).use { zos ->
-            files.forEach { file ->
-                FileInputStream(file).use { fis ->
-                    val entry = ZipEntry(file.name)
-                    zos.putNextEntry(entry)
-                    fis.copyTo(zos, 1024)
-                }
-            }
-        }
-        Log.d("ZIP", "ZIP created: ${zipFile.absolutePath} (${zipFile.length() / 1024} KB)")
-    }
-
     fun formatFileSize(bytes: Long): String {
         val kb = 1024
         val mb = kb * 1024

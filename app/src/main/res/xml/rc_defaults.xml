@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<defaultsMap>
+    <!-- Capture cadence -->
+    <entry key="capture_interval_sec" value="1" />
+
+    <!-- Upload zip time -->
+    <entry key="upload_interval_sec" value="60" />
+
+    <!-- Image processing knobs -->
+    <entry key="jpeg_to_webp_quality" value="80" />
+    <entry key="jpeg_to_webp_max_dim" value="1200" />
+
+    <entry key="auto_upload_enabled" value="true" />
+</defaultsMap>

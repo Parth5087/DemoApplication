@@ -30,6 +30,7 @@ android {
             )
         }
     }
+    buildFeatures { buildConfig = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
@@ -101,6 +102,7 @@ dependencies {
 
     // Firebase core (Analytics, optional but common)
     implementation("com.google.firebase:firebase-analytics-ktx")
+    implementation("com.google.firebase:firebase-config-ktx")
 
     // Firebase Crashlytics
     implementation("com.google.firebase:firebase-crashlytics-ktx")

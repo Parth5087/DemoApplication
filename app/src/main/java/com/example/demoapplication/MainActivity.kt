@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.view.WindowManager
 import android.widget.*
@@ -21,7 +22,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import com.example.demoapplication.domain.analytics.AggregatesSender
 import com.example.demoapplication.domain.faceDection.FaceDetectionOverlay
-import com.example.demoapplication.services.UsbCameraWatcherService
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -42,6 +42,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cameraPreview: FrameLayout
     private lateinit var btnSwitchCamera: ImageButton
     private lateinit var btnClearCounts: Button
+
+    // default 1 minute
+    private var uploadIntervalMillis: Long = 60_000L
 
     // flip this to true to run **preview-only** (no analysis)
     private val previewOnly = false   // <<–– set true for TV webcam debugging
@@ -65,6 +68,12 @@ class MainActivity : AppCompatActivity() {
             insets
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+
+        // fetch RC and apply
+        RemoteConfigHelper.fetchAndActivate {
+            uploadIntervalMillis = RemoteConfigHelper.uploadIntervalMs()
+            // if the job already running, you could restart it to apply new cadence
+        }
 
         // UI refs
         permissionLayout = findViewById(R.id.permissionLayout)
@@ -138,33 +147,28 @@ class MainActivity : AppCompatActivity() {
     private var testJob: Job? = null
 
     private fun startTestSendingEveryMinute() {
-        // avoid duplicate jobs
         if (testJob?.isActive == true) return
 
+        // always read latest value (in case it changed while app is open)
+        uploadIntervalMillis = RemoteConfigHelper.uploadIntervalMs()
+
         testJob = lifecycleScope.launch {
-            // ⏳ wait 1 minute BEFORE first send
-            delay(60_000L)
+            // wait BEFORE first send
+            delay(uploadIntervalMillis)
 
             while (isActive) {
                 val sender = AggregatesSender(this@MainActivity)
-                val now = System.currentTimeMillis()
-                val oneMinuteAgo = now - 60_000L
+                val now   = System.currentTimeMillis()
+                val from  = now - uploadIntervalMillis
 
                 val ok = sender.sendStoredPersonsAggregates(
                     cameras = listOf("camera1"),
-                    fromMillis = oneMinuteAgo,
+                    fromMillis = from,
                     toMillis = now,
                     fallbackToAnyLatest = true
                 )
-
-                Toast.makeText(
-                    this@MainActivity,
-                    if (ok) "Sent ✅ at ${Date()}" else "Send failed ❌",
-                    Toast.LENGTH_SHORT
-                ).show()
-
-                // wait next minute
-                delay(60_000L)
+                Log.d("AGG-SEND", if (ok) "Sent ✅ every ${uploadIntervalMillis/1000}s" else "Send failed ❌")
+                delay(uploadIntervalMillis)
             }
         }
     }
@@ -199,7 +203,6 @@ class MainActivity : AppCompatActivity() {
             previewOnly = previewOnly              // <<–– flip true to test webcam only
         )
         cameraPreview.addView(faceDetectionOverlay)
-//        startTestSendingEveryMinute()
-
+        startTestSendingEveryMinute()
     }
 }

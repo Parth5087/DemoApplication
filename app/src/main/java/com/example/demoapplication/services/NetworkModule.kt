@@ -7,52 +7,55 @@ import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
 
 object NetworkModule {
-    // TODO: change this to your server base URL (must end with /)
-    /*private const val BASE_URL = "https://face.gatetouch.com/functions/"
+    private const val BASE_URL_AUTO_PHOTO = "http://192.168.0.121:9001/"
+    private const val BASE_URL_LIVE_DETECT = "https://face.gatetouch.com/functions/"
+
+    @Volatile private var baseUrl: String = BASE_URL_AUTO_PHOTO
+    @Volatile private var retrofitRef: Retrofit? = null
 
     private val logging = HttpLoggingInterceptor().apply {
-        level = HttpLoggingInterceptor.Level.BODY
-    }
-
-    private val client = OkHttpClient.Builder()
-        .addInterceptor(logging)
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
-        .build()
-
-    private val retrofit by lazy {
-        Retrofit.Builder()
-            .baseUrl(BASE_URL)
-            .addConverterFactory(GsonConverterFactory.create())
-            .client(client)
-            .build()
-    }
-
-    val api: CrowdApi by lazy { retrofit.create(CrowdApi::class.java) }*/
-
-    // Emulator par host = 10.0.2.2 (jo server PC par chale to)
-    // Physical device par: server ni LAN IP aapo (e.g., http://192.168.1.50:9000/)
-    private const val BASE_URL = "http://192.168.0.122:9000/"
-
-    private val logging = HttpLoggingInterceptor().apply {
+        // BODY/HEADERS : debug ma BODY, prod ma NONE
         level = HttpLoggingInterceptor.Level.NONE
     }
 
-    private val client = OkHttpClient.Builder()
-        .addInterceptor(logging)
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
-        .build()
-
-    val retrofit: Retrofit by lazy {
-        Retrofit.Builder()
-            .baseUrl(BASE_URL)
-            .addConverterFactory(GsonConverterFactory.create())
-            .client(client)
+    private val client: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .addInterceptor(logging)
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
             .build()
     }
 
-    val api: CrowdApi by lazy { retrofit.create(CrowdApi::class.java) }
+    private fun buildRetrofit(url: String): Retrofit =
+        Retrofit.Builder()
+            .baseUrl(url)
+            .addConverterFactory(GsonConverterFactory.create())
+            .client(client)
+            .build()
+
+    /** Map start_destination → base URL and rebuild Retrofit if needed */
+    @Synchronized
+    fun applyStartDestination(dest: String?) {
+        val newUrl = when (dest?.lowercase()) {
+            "auto_photo_capture" -> BASE_URL_AUTO_PHOTO
+            "live_camera_detect" -> BASE_URL_LIVE_DETECT
+            else -> BASE_URL_AUTO_PHOTO // fallback
+        }
+        if (newUrl != baseUrl || retrofitRef == null) {
+            baseUrl = newUrl
+            retrofitRef = buildRetrofit(baseUrl)
+        }
+    }
+
+    val api: CrowdApi
+        get() {
+            // lazy-init if not built yet
+            if (retrofitRef == null) {
+                synchronized(this) {
+                    if (retrofitRef == null) retrofitRef = buildRetrofit(baseUrl)
+                }
+            }
+            return retrofitRef!!.create(CrowdApi::class.java)
+        }
 }

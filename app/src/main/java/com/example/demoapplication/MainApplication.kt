@@ -19,6 +19,8 @@ class MainApplication : Application() {
         FirebaseApp.initializeApp(this)
         FirebaseCrashlytics.getInstance().isCrashlyticsCollectionEnabled = true
         FirebaseCrashlytics.getInstance().sendUnsentReports()
+        RemoteConfigHelper.init(this)
+        RemoteConfigHelper.fetchAndActivate() // early fetch
 
         val workRequest = PeriodicWorkRequestBuilder<CleanupWorker>(15, TimeUnit.MINUTES).build()
 

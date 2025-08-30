@@ -27,28 +27,33 @@
         android:theme="@style/Theme.DemoApplication"
         tools:targetApi="31"
         android:usesCleartextTraffic="true">
-        <activity
-            android:name=".ImageGalleryActivity"
-            android:exported="false" />
+
         <activity
             android:name=".CameraDetectActivity"
             android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-
-                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
-            </intent-filter>
         </activity>
-        <activity
-            android:name=".TvScreen.TvScreenActivity"
-            android:exported="true">
 
-        </activity>
         <activity
             android:name=".MainActivity"
             android:exported="true">
-
         </activity>
+
+        <activity
+            android:name=".LauncherActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+                <!-- or NORMAL phones:
+                <category android:name="android.intent.category.LAUNCHER" /> -->
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".services.CameraService"
+            android:foregroundServiceType="camera|dataSync"
+            android:exported="false"/>
+
     </application>
 
 </manifest>
