@@ -22,12 +22,7 @@ class MainApplication : Application() {
         RemoteConfigHelper.init(this)
         RemoteConfigHelper.fetchAndActivate() // early fetch
 
-        val workRequest = PeriodicWorkRequestBuilder<CleanupWorker>(15, TimeUnit.MINUTES).build()
-
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            "CleanupWork",
-            ExistingPeriodicWorkPolicy.KEEP,
-            workRequest
-        )
+        // Schedule the first cleanup
+        CleanupWorker.scheduleNextCleanup(this)
     }
 }

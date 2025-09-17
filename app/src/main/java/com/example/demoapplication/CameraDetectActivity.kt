@@ -108,7 +108,7 @@ class CameraDetectActivity : AppCompatActivity() {
     // ===== Remote Config =====
     private fun applyRc() {
         intervalMillis        = RemoteConfigHelper.captureIntervalMs()
-        uploadIntervalMillis  = RemoteConfigHelper.uploadIntervalMs()
+        uploadIntervalMillis  = RemoteConfigHelper.uploadIntervalPhotosMs()
         webpQuality           = RemoteConfigHelper.webpQuality()
         webpMaxDim            = RemoteConfigHelper.webpMaxDim()
         autoUploadEnabled     = RemoteConfigHelper.autoUploadEnabled()

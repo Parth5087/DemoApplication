@@ -12,8 +12,19 @@
         android:name="android.hardware.camera.external"
         android:required="false" />
 
+    <!-- Add these features with required="false" for USB camera support -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:name=".MainApplication"
@@ -25,9 +36,8 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.DemoApplication"
-        tools:targetApi="31"
-        android:usesCleartextTraffic="true">
-
+        android:usesCleartextTraffic="true"
+        tools:targetApi="31" >
         <activity
             android:name=".CameraDetectActivity"
             android:exported="true">
@@ -48,6 +58,38 @@
                 <category android:name="android.intent.category.LAUNCHER" /> -->
             </intent-filter>
         </activity>
+
+
+        <service
+            android:name=".services.LiveCameraDetectService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="camera|dataSync" />
+
+        <service
+            android:name=".services.BootStarterService"
+            android:enabled="true"
+            android:exported="true"
+            android:stopWithTask="false" />
+
+        <service
+            android:name=".services.CameraBackgroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="camera" />
+
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

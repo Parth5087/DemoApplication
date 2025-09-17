@@ -5,7 +5,7 @@
   "entities": [
     {
       "id": "1:6022793439182419491",
-      "lastPropertyId": "9:4701601320483194554",
+      "lastPropertyId": "10:7337348671201050260",
       "name": "FaceImageRecord",
       "properties": [
         {
@@ -97,7 +97,8 @@
     3740748471272127177
   ],
   "retiredPropertyUids": [
-    765445784482171042
+    765445784482171042,
+    7337348671201050260
   ],
   "retiredRelationUids": [],
   "version": 1

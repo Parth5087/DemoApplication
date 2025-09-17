@@ -2,7 +2,6 @@ package com.example.demoapplication
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -26,7 +25,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.util.Date
 
 class MainActivity : AppCompatActivity() {
     private lateinit var viewModel: MainActivityViewModel
@@ -71,7 +69,7 @@ class MainActivity : AppCompatActivity() {
 
         // fetch RC and apply
         RemoteConfigHelper.fetchAndActivate {
-            uploadIntervalMillis = RemoteConfigHelper.uploadIntervalMs()
+            uploadIntervalMillis = RemoteConfigHelper.uploadIntervalDataMs()
             // if the job already running, you could restart it to apply new cadence
         }
 
@@ -89,12 +87,6 @@ class MainActivity : AppCompatActivity() {
 
         btnAllow.setOnClickListener {
             requestPermissionLauncher.launch(Manifest.permission.CAMERA)
-        }
-
-        btnSwitchCamera.setOnClickListener {
-            if (::faceDetectionOverlay.isInitialized) {
-                faceDetectionOverlay.switchCamera()
-            }
         }
 
         val factory = MainActivityViewModelFactory(this)
@@ -150,7 +142,7 @@ class MainActivity : AppCompatActivity() {
         if (testJob?.isActive == true) return
 
         // always read latest value (in case it changed while app is open)
-        uploadIntervalMillis = RemoteConfigHelper.uploadIntervalMs()
+        uploadIntervalMillis = RemoteConfigHelper.uploadIntervalDataMs()
 
         testJob = lifecycleScope.launch {
             // wait BEFORE first send
@@ -165,7 +157,7 @@ class MainActivity : AppCompatActivity() {
                     cameras = listOf("camera1"),
                     fromMillis = from,
                     toMillis = now,
-                    fallbackToAnyLatest = true
+                    intervalTime = RemoteConfigHelper.getIntervalTime()
                 )
                 Log.d("AGG-SEND", if (ok) "Sent ✅ every ${uploadIntervalMillis/1000}s" else "Send failed ❌")
                 delay(uploadIntervalMillis)

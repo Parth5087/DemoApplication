@@ -2,7 +2,11 @@ package com.example.demoapplication
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import com.example.demoapplication.services.CameraBackgroundService
+import com.example.demoapplication.services.LiveCameraDetectService
 import com.example.demoapplication.services.NetworkModule
 
 class LauncherActivity : AppCompatActivity() {
@@ -10,22 +14,21 @@ class LauncherActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_launcher)
 
-        // Fetch RC -> apply base URL -> open destination
-        RemoteConfigHelper.fetchAndActivate {
-            val dest = RemoteConfigHelper.startDestination() // "auto_photo_capture" / "live_camera_detect"
-            NetworkModule.applyStartDestination(dest)
-            openDestination()
-        }
-
-        // Safety fallback in case fetch is slow: still apply base URL from cached/DEFAULT values
-        window.decorView.postDelayed({
-            if (!launched) {
-                val dest = RemoteConfigHelper.startDestination()
-                NetworkModule.applyStartDestination(dest)
-                openDestination()
+        // Only open destination when remote config fetch+activate returns success
+        RemoteConfigHelper.fetchAndActivate { success ->
+            runOnUiThread {
+                if (!launched && success) {
+                    val dest = RemoteConfigHelper.startDestination()
+                    NetworkModule.applyStartDestination(dest)
+                    openDestination()
+                } else if (!success) {
+                    Log.w("LauncherActivity", "RemoteConfig fetch failed — not opening destination")
+                    // Optionally show a UI message to user here
+                }
             }
-        }, 1500)
+        }
     }
 
     private fun openDestination() {
@@ -35,16 +38,24 @@ class LauncherActivity : AppCompatActivity() {
         val dest = RemoteConfigHelper.startDestination().lowercase()
         when (dest) {
             "auto_photo_capture" -> {
-                startActivity(Intent(this, CameraDetectActivity::class.java))
+                val serviceIntent = Intent(this, CameraBackgroundService::class.java)
+                ContextCompat.startForegroundService(this, serviceIntent)
+//                startActivity(Intent(this, CameraDetectActivity::class.java))
+                Log.d("OpenDest", "Started CameraService for auto_photo_capture")
             }
             "live_camera_detect" -> {
-                startActivity(Intent(this, MainActivity::class.java))
+                val serviceIntent = Intent(this, LiveCameraDetectService::class.java)
+                ContextCompat.startForegroundService(this, serviceIntent)
+//                startActivity(Intent(this, MainActivity::class.java))
+                Log.d("OpenDest", "Started LiveCameraService for live_camera_detect")
             }
             else -> {
-                startActivity(Intent(this, CameraDetectActivity::class.java))
+                val serviceIntent = Intent(this, LiveCameraDetectService::class.java)
+                ContextCompat.startForegroundService(this, serviceIntent)
+//                startActivity(Intent(this, CameraDetectActivity::class.java))
+                Log.d("OpenDest", "Started default CameraService (fallback)")
             }
         }
         finish()
     }
-
 }

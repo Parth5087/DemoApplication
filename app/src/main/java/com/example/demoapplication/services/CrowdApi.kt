@@ -1,8 +1,7 @@
 package com.example.demoapplication.services
 
-import com.example.demoapplication.domain.analytics.CameraEnvelope
+import com.example.demoapplication.domain.analytics.HourlyPayload
 import okhttp3.MultipartBody
-import okhttp3.RequestBody
 import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.Body
@@ -13,10 +12,9 @@ import retrofit2.http.Query
 
 
 interface CrowdApi {
-    // ✅ endpoint matches your curl: /functions/SubmitCameraReport
     @POST("SubmitCameraReport")
     suspend fun postAggregates(
-        @Body body: Map<String, CameraEnvelope>
+        @Body body: HourlyPayload
     ): Response<Unit>
 
     // NEW: /v1/ingest?camera_id=cam1  (multipart: file + camera_id)

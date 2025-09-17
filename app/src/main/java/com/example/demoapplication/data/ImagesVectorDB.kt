@@ -2,15 +2,12 @@ package com.example.demoapplication.data
 
 import android.content.Context
 import android.util.Log
+import com.example.demoapplication.RemoteConfigHelper
 import io.objectbox.kotlin.boxFor
 import javax.inject.Singleton
 
 @Singleton
 class ImagesVectorDB(context: Context) {
-
-//    private val store = MyObjectBox.builder()
-//        .androidContext(context)
-//        .build()
 
     private val imagesBox = ObjectBoxStore.store.boxFor<FaceImageRecord>()
 
@@ -28,14 +25,21 @@ class ImagesVectorDB(context: Context) {
     }
 
     fun removeExpiredRecords() {
-        val oneHourAgo = System.currentTimeMillis() - (60 * 60 * 1000) // 1 hour in ms
-        val expiredIds = imagesBox.query(FaceImageRecord_.createdAt.less(oneHourAgo))
+        val expirationTimeMillis = try {
+            RemoteConfigHelper.getExpirationHours()
+        } catch (e: Exception) {
+            Log.e("ImagesVectorDB", "Error getting remote config, using default: ${e.message}")
+            1 * 60 * 1000 // Fallback to 1 minute  in ms
+        }
+
+        val expirationThreshold = System.currentTimeMillis() - expirationTimeMillis
+        val expiredIds = imagesBox.query(FaceImageRecord_.createdAt.less(expirationThreshold))
             .build()
             .findIds().toList()
 
         if (expiredIds.isNotEmpty()) {
             imagesBox.removeByIds(expiredIds)
-            Log.d("ImagesVectorDB", "Removed ${expiredIds.size} expired records")
+            Log.d("ImagesVectorDB", "Removed ${expiredIds.size} expired records (threshold: ${expirationTimeMillis/1000/60} minutes)")
         }
     }
 
