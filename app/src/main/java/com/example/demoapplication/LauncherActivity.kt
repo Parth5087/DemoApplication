@@ -15,13 +15,14 @@ class LauncherActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_launcher)
-
+        Log.w("LauncherActivity", "Start Activity")
         // Only open destination when remote config fetch+activate returns success
         RemoteConfigHelper.fetchAndActivate { success ->
             runOnUiThread {
                 if (!launched && success) {
                     val dest = RemoteConfigHelper.startDestination()
                     NetworkModule.applyStartDestination(dest)
+                    Log.w("LauncherActivity", "Start Activity - calling openDestination()")
                     openDestination()
                 } else if (!success) {
                     Log.w("LauncherActivity", "RemoteConfig fetch failed — not opening destination")

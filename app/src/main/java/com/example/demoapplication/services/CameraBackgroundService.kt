@@ -48,6 +48,16 @@ class CameraBackgroundService : Service() {
         private const val TAG = "CameraBackgroundService"
         private const val NOTIFICATION_CHANNEL_ID = "camera_service_channel"
         private const val NOTIFICATION_ID = 101
+        
+        fun startService(context: Context) {
+            try {
+                val intent = Intent(context, CameraBackgroundService::class.java)
+                context.startForegroundService(intent)
+                Log.d(TAG, "CameraBackgroundService started from companion")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start CameraBackgroundService", e)
+            }
+        }
     }
 
     // Remote Config properties

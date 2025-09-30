@@ -11,6 +11,9 @@
     <uses-feature
         android:name="android.hardware.camera.external"
         android:required="false" />
+<!--    <uses-feature-->
+<!--        android:name="android.software.home_screen"-->
+<!--        android:required="true" />-->
 
     <!-- Add these features with required="false" for USB camera support -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -18,13 +21,23 @@
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+<!--    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />-->
+<!--    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />-->
+<!--    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />-->
+    <uses-permission android:name="com.adx.permission.ADMIN"/>
+    <permission
+        android:name="com.adx.permission.ADMIN"
+        android:protectionLevel="signature" />
+
 
     <application
         android:name=".MainApplication"
@@ -50,12 +63,12 @@
 
         <activity
             android:name=".LauncherActivity"
-            android:exported="true">
+            android:exported="true"
+            android:turnScreenOn="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
-                <!-- or NORMAL phones:
-                <category android:name="android.intent.category.LAUNCHER" /> -->
             </intent-filter>
         </activity>
 
@@ -63,14 +76,16 @@
         <service
             android:name=".services.LiveCameraDetectService"
             android:enabled="true"
-            android:exported="false"
+            android:exported="true"
             android:foregroundServiceType="camera|dataSync" />
 
         <service
             android:name=".services.BootStarterService"
             android:enabled="true"
-            android:exported="true"
-            android:stopWithTask="false" />
+            android:stopWithTask="false"
+            android:exported="false"
+            android:directBootAware="true"
+            android:foregroundServiceType="specialUse"/>
 
         <service
             android:name=".services.CameraBackgroundService"
@@ -78,18 +93,20 @@
             android:exported="false"
             android:foregroundServiceType="camera" />
 
-        <receiver
+        <!--&lt;!&ndash; Add this to declare your app as a system app (for Android TV) &ndash;&gt;
+        <property
+            android:name="android.app.system_app"
+            android:value="true" />-->
+
+        <!--<receiver
             android:name=".BootReceiver"
             android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            android:directBootAware="true">
             <intent-filter>
-                <category android:name="android.intent.category.DEFAULT" />
-
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
-                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
-        </receiver>
+        </receiver>-->
 
     </application>
 

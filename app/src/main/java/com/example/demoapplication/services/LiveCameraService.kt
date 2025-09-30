@@ -6,56 +6,36 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
+import android.app.Service
+import android.content.*
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.ImageFormat
-import android.graphics.Matrix
-import android.graphics.PorterDuff
-import android.graphics.SurfaceTexture
+import android.graphics.*
 import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
-import android.os.Build
-import android.os.Handler
-import android.os.IBinder
-import android.os.Looper
+import android.os.*
 import android.util.Log
 import android.util.Size
 import android.view.Surface
 import androidx.annotation.RequiresApi
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
+import androidx.camera.core.*
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.core.impl.utils.Threads
 import com.example.demoapplication.MainActivityViewModel
 import com.example.demoapplication.MainActivityViewModelFactory
 import com.example.demoapplication.RemoteConfigHelper
 import com.example.demoapplication.domain.analytics.AggregatesSender
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.*
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.max
 
 class LiveCameraDetectService : LifecycleService() {
 
@@ -76,6 +56,7 @@ class LiveCameraDetectService : LifecycleService() {
     private var imageAnalysis: ImageAnalysis? = null
 
     // ---------- Headless preview surface to force frames ----------
+    // Create lazily when preview.setSurfaceProvider is called
     private var previewSurfaceTexture: SurfaceTexture? = null
     private var previewSurface: Surface? = null
     private val previewProviderExecutor = Executors.newSingleThreadExecutor()
@@ -96,11 +77,13 @@ class LiveCameraDetectService : LifecycleService() {
 
     // ---------- Notification / handler ----------
     private val handler = Handler(Looper.getMainLooper())
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     // ---------- USB receiver and reinit guard ----------
     private val usbReceiverRegistered = AtomicBoolean(false)
     // reinitInProgress indicates we are retrying; reinitScheduledToken used to cancel pending runnable
     private val reinitInProgress = AtomicBoolean(false)
+    private val bindInProgress = AtomicBoolean(false)
     private var reinitScheduledToken: Runnable? = null
     private var lastSuccessfulBindMs: Long = 0L
 
@@ -346,7 +329,10 @@ class LiveCameraDetectService : LifecycleService() {
                 try {
                     cameraProvider = providerFuture.get()
                     Log.d(TAG, "ProcessCameraProvider ready")
-                    setupAndBindAnalysis()
+                    // Post bind non-blocking (avoid heavy work in this listener)
+                    mainHandler.postDelayed({
+                        performBindAnalysisStep()
+                    }, 250L)
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to obtain ProcessCameraProvider in listener: ${e.message}")
                     scheduleRetry()
@@ -359,20 +345,16 @@ class LiveCameraDetectService : LifecycleService() {
     }
 
     // ---------------- setup and bind (pre-created headless preview) ----------------
-    private fun setupAndBindAnalysis() {
-        Log.d(TAG, "setupAndBindAnalysis: Starting camera binding process")
-
-        // Wait a bit more for hardware to stabilize
-        Thread.sleep(1000L)
+    private fun performBindAnalysisStep() {
+        Log.d(TAG, "performBindAnalysisStep: Starting camera binding process (non-blocking)")
 
         try {
-            Log.d(TAG, "setupAndBindAnalysis Try:}")
             imageAnalysis?.clearAnalyzer()
         } catch (e: Exception) {
-            Log.d(TAG, "setupAndBindAnalysis exception: ${e.message}}")
+            Log.d(TAG, "performBindAnalysisStep exception: ${e.message}")
         }
 
-        // Create ImageAnalysis with more relaxed settings
+        // Build ImageAnalysis but avoid making large allocations here.
         imageAnalysis = ImageAnalysis.Builder()
             .setTargetResolution(Size(640, 480))
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST) // More forgiving
@@ -389,45 +371,38 @@ class LiveCameraDetectService : LifecycleService() {
             .setTargetResolution(Size(640, 480))
             .build()
 
-        // Ensure previewSurfaceTexture & previewSurface exist and have an initial buffer size
-        try {
-            if (previewSurfaceTexture == null) {
-                previewSurfaceTexture = SurfaceTexture(0)
-                previewSurfaceTexture!!.setDefaultBufferSize(640, 480)
-                previewSurface = Surface(previewSurfaceTexture)
-                Log.d(TAG, "Pre-created headless preview Surface (640x480) BEFORE bind")
-            } else {
-                previewSurfaceTexture!!.setDefaultBufferSize(640, 480)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to pre-create preview Surface: ${e.message}")
-        }
-
-        // Provide the pre-created surface synchronously when CameraX asks
         preview.setSurfaceProvider { request ->
-            try {
-                previewSurfaceTexture?.setDefaultBufferSize(request.resolution.width, request.resolution.height)
-                if (previewSurface == null && previewSurfaceTexture != null) {
-                    previewSurface = Surface(previewSurfaceTexture)
-                }
-                if (previewSurface != null) {
-                    request.provideSurface(previewSurface!!, previewProviderExecutor) { result ->
-                        Log.v(TAG, "Preview surface release callback: $result")
+            // Create or update previewSurfaceTexture on a background executor to avoid main-thread allocations.
+            previewProviderExecutor.execute {
+                try {
+                    if (previewSurfaceTexture == null) {
+                        // create SurfaceTexture on background thread
+                        previewSurfaceTexture = SurfaceTexture(0)
                     }
-                    Log.d(TAG, "Provided pre-created preview surface for request ${request.resolution}")
-                } else {
-                    Log.w(TAG, "No previewSurface available to provide; calling willNotProvideSurface()")
+                    previewSurfaceTexture!!.setDefaultBufferSize(request.resolution.width, request.resolution.height)
+                    if (previewSurface == null) {
+                        previewSurface = Surface(previewSurfaceTexture)
+                    }
+                    // Provide the surface back on the request callback thread (we must call request.provideSurface here)
+                    try {
+                        request.provideSurface(previewSurface!!, previewProviderExecutor) { result ->
+                            Log.v(TAG, "Preview surface release callback: $result")
+                        }
+                        Log.d(TAG, "Provided pre-created preview surface for request ${request.resolution}")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Error while providing surface: ${e.message}")
+                        try { request.willNotProvideSurface() } catch (_: Exception) {}
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to create/prepare preview surface off-main: ${e.message}")
                     try { request.willNotProvideSurface() } catch (_: Exception) {}
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Error while providing surface: ${e.message}")
-                try { request.willNotProvideSurface() } catch (_: Exception) {}
             }
         }
 
         val provider = cameraProvider
         if (provider == null) {
-            Log.e(TAG, "setupAndBindAnalysis: cameraProvider is null - can't bind")
+            Log.e(TAG, "performBindAnalysisStep: cameraProvider is null - can't bind")
             scheduleRetry()
             return
         }
@@ -441,7 +416,8 @@ class LiveCameraDetectService : LifecycleService() {
             return
         }
 
-        // Try each camera with more detailed logging
+        // Try cameras quickly but don't block the main thread
+        var bound = false
         for ((index, cameraInfo) in cameraInfos.withIndex()) {
             try {
                 Log.d(TAG, "Trying camera $index: $cameraInfo")
@@ -451,14 +427,31 @@ class LiveCameraDetectService : LifecycleService() {
                     .addCameraFilter { listOf(cameraInfo) }
                     .build()
 
-                provider.bindToLifecycle(this@LiveCameraDetectService, selector, preview, imageAnalysis)
-                Log.i(TAG, "Successfully bound to camera $index")
-                lastSuccessfulBindMs = System.currentTimeMillis()
-                cancelScheduledReinit()
-                return
+                // before posting:
+                if (!bindInProgress.compareAndSet(false, true)) {
+                    Log.d(TAG, "Bind already in progress — skipping additional attempt")
+                    continue
+                }
+                mainHandler.post {
+                    try {
+                        provider.bindToLifecycle(this@LiveCameraDetectService, selector, preview, imageAnalysis)
+                        Log.i(TAG, "Successfully bound to camera $index")
+                        lastSuccessfulBindMs = System.currentTimeMillis()
+                        cancelScheduledReinit()
+                        bound = true
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to bind to camera $index (main thread bind): ${e.message}")
+                    } finally {
+                        bindInProgress.set(false)
+                    }
+                }
 
+                // Give the bind a short window to succeed before trying the next camera
+                // (non-blocking: we schedule check after 900ms)
+//                Thread.sleep(100) // very short and happens on this worker; not main
+                if (bound) return
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to bind to camera $index: ${e.message}")
+                Log.w(TAG, "Failed to prepare bind to camera $index: ${e.message}")
             }
         }
 
@@ -490,6 +483,7 @@ class LiveCameraDetectService : LifecycleService() {
             val h = image.height
             ensureBuffers(w, h)
 
+            // ensureBuffers already called from analyzer thread before analyzeImageProxy invocation
             if (image.format == ImageFormat.YUV_420_888) {
                 packToNV21(image, nv21Buf!!)
                 yuvToArgb(nv21Buf!!, argbBuf!!, w, h)
@@ -556,6 +550,10 @@ class LiveCameraDetectService : LifecycleService() {
 
     // ---------------- buffer & conversion helpers ----------------
     private fun ensureBuffers(w: Int, h: Int) {
+        // This function must be called on analyzerExecutor / background thread
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            Log.w(TAG, "ensureBuffers called on main thread - avoid large allocations on main")
+        }
         if (rgbBitmap == null || rgbBitmap!!.width != w || rgbBitmap!!.height != h) {
             rgbBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         }
@@ -671,7 +669,6 @@ class LiveCameraDetectService : LifecycleService() {
 
     // SCHEDULE / CANCEL reinit with debounce and cancelation support
     private fun scheduleReinit() {
-        // If we recently bound successfully, ignore this request
         val now = System.currentTimeMillis()
         if ((now - lastSuccessfulBindMs) < REINIT_DEBOUNCE_MS) {
             Log.d(TAG, "scheduleReinit: Ignored due to recent successful bind (${now - lastSuccessfulBindMs}ms)")
@@ -681,14 +678,12 @@ class LiveCameraDetectService : LifecycleService() {
             Log.d(TAG, "scheduleReinit: Reinit already in progress")
             return
         }
-        // Cancel any previously scheduled runnable
         cancelScheduledReinit()
 
         val runnable = Runnable {
             reinitializeCameraWithRetry()
         }
         reinitScheduledToken = runnable
-        // schedule after small delay to allow transient states to settle
         handler.postDelayed(runnable, 800)
         Log.d(TAG, "scheduleReinit: Reinit scheduled (token set)")
     }
