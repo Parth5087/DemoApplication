@@ -1,9 +1,8 @@
 package com.example.demoapplication
 
 import android.app.Application
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
+import android.content.Intent
+import android.util.Log
 import com.example.demoapplication.data.ObjectBoxStore
 import com.example.demoapplication.domain.CleanupWorker
 import com.google.firebase.FirebaseApp
@@ -12,7 +11,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import java.util.concurrent.TimeUnit
+import android.os.Process
+import kotlin.system.exitProcess
 
 class MainApplication : Application() {
 
@@ -34,5 +34,22 @@ class MainApplication : Application() {
 
         // Schedule the first cleanup
         CleanupWorker.scheduleNextCleanup(this)
+        setupExceptionHandler()
+    }
+
+    private fun setupExceptionHandler() {
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            // Log the crash
+            Log.e("AppCrash", "App crashed, restarting...", throwable)
+            // Restart the app
+            val intent = Intent(this, LauncherActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                putExtra("CRASH_RESTART", true)
+            }
+            startActivity(intent)
+            // Kill the current process
+            Process.killProcess(Process.myPid())
+            exitProcess(1)
+        }
     }
 }
