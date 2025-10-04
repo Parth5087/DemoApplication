@@ -8,11 +8,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.demoapplication"
+    namespace = "com.uav.analytics"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.demoapplication"
+        applicationId = "com.uav.analytics"
         minSdk = 24
         targetSdk = 34
         versionCode = 1

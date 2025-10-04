@@ -7,9 +7,9 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:841728451991:android:ca7cf60b739b9d992910d2",
+        "mobilesdk_app_id": "1:841728451991:android:56009aa47aa9cc962910d2",
         "android_client_info": {
-          "package_name": "com.example.demoapplication"
+          "package_name": "com.uav.analytics"
         }
       },
       "oauth_client": [],

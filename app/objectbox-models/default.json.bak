@@ -5,7 +5,7 @@
   "entities": [
     {
       "id": "1:6022793439182419491",
-      "lastPropertyId": "10:7337348671201050260",
+      "lastPropertyId": "11:3754897387831098616",
       "name": "FaceImageRecord",
       "properties": [
         {
@@ -52,6 +52,11 @@
           "id": "9:4701601320483194554",
           "name": "createdAt",
           "type": 6
+        },
+        {
+          "id": "11:3754897387831098616",
+          "name": "secondDetectTimeDiff",
+          "type": 6
         }
       ],
       "relations": []
@@ -81,11 +86,6 @@
           "id": "4:200102630707254336",
           "name": "addTime",
           "type": 6
-        },
-        {
-          "id": "5:8959763366979704799",
-          "name": "lastSeen",
-          "type": 6
         }
       ],
       "relations": []
@@ -103,7 +103,8 @@
   ],
   "retiredPropertyUids": [
     765445784482171042,
-    7337348671201050260
+    7337348671201050260,
+    8959763366979704799
   ],
   "retiredRelationUids": [],
   "version": 1
