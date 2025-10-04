@@ -39,27 +39,22 @@ class AnalyticsRepository(private val context: Context) {
         cameras: List<String>,
         fromMillis: Long,
         toMillis: Long,
-        intervalTime: Long = 60L, // <-- interval in SECONDS (default: 60s)
+        intervalTime: Long = 180L, // Changed to 3 minutes (180 seconds) default
     ): HourlyPayload {
 
-        // Convert seconds to milliseconds for internal calculations
-        val intervalMillis = (if (intervalTime <= 0) 60L else intervalTime) * 1000L
+        val intervalMillis = (if (intervalTime <= 0) 180L else intervalTime) * 1000L
 
         val camerasMap = mutableMapOf<String, Map<String, Any>>()
 
         cameras.forEach { cameraId ->
-
-            // Query all records for this camera in the hour (single query).
+            // Query all records for this camera in the hour
             val allRecsInHour: List<FaceImageRecord> = faceBox.query {
                 between(FaceImageRecord_.createdAt, fromMillis, toMillis)
-                // If FaceImageRecord has cameraId field, un-comment the next line:
-                // equal(FaceImageRecord_.cameraId, cameraId)
             }.find()
 
-            // latest record timestamp for this camera (for last_updated); fallback to toMillis
             val latestRecTimestamp = allRecsInHour.maxOfOrNull { it.createdAt } ?: toMillis
 
-            // Partition records by minute bucket index
+            // Partition records by 3-minute buckets
             val numBuckets = ((toMillis - fromMillis + intervalMillis - 1) / intervalMillis).toInt().coerceAtLeast(1)
             val buckets: Array<MutableList<FaceImageRecord>> = Array(numBuckets) { mutableListOf() }
 
@@ -87,25 +82,27 @@ class AnalyticsRepository(private val context: Context) {
             val looking3plusTotal = 0
             val uniquePersonIdsAcrossHour = mutableSetOf<Long>()
 
-            // Build per-minute batch entries and aggregate to camera totals
-            val cameraEntries = mutableMapOf<String, Any>() // dynamic map containing totals + batch_* keys
+            val cameraEntries = mutableMapOf<String, Any>()
 
             for (idx in 0 until numBuckets) {
                 val bucketRecs = buckets[idx]
                 val windowStart = fromMillis + idx * intervalMillis
-                min(windowStart + intervalMillis, toMillis)
+                val windowEnd = min(windowStart + intervalMillis, toMillis)
 
-                // compute per-minute counts
-                val headCount = bucketRecs.size // approximate; adjust if you compute head vs face differently
+                // Calculate unique persons in this 3-minute batch
+                val uniquePersonsInBatch = bucketRecs.map { it.personID }.toSet().size
+
+                // Compute counts for this 3-minute batch
+                val headCount = uniquePersonsInBatch // Use unique persons as head count
                 val faceCount = bucketRecs.size
-                val looking3plus = 0 // placeholder; compute from rec if available
+                val looking3plus = 0
 
-                // per-minute gender counts
+                // Gender counts
                 val gMale = bucketRecs.count { it.gender?.trim() == "Male" }
                 val gFemale = bucketRecs.count { it.gender?.trim() == "Female" }
                 val gUnknown = bucketRecs.count { it.gender == null || it.gender!!.trim().isEmpty() || it.gender!!.trim() !in setOf("Male", "Female") }
 
-                // emotions
+                // Emotions
                 val eNeutral = bucketRecs.count { it.expression?.lowercase()?.trim() == "neutral" }
                 val eHappy = bucketRecs.count { it.expression?.lowercase()?.trim() == "happy" }
                 val eSurprised = bucketRecs.count { listOf("surprised","surprise").contains(it.expression?.lowercase()?.trim()) }
@@ -115,25 +112,24 @@ class AnalyticsRepository(private val context: Context) {
                 val eFear = bucketRecs.count { it.expression?.lowercase()?.trim() == "fear" }
                 val eContempt = bucketRecs.count { it.expression?.lowercase()?.trim() == "contempt" }
 
-                // age category counts mapping back to your strings
+                // Age categories
                 val aChild = bucketRecs.count { it.ageGroup?.trim() == "Child (0-14)" }
                 val aYoung = bucketRecs.count { it.ageGroup?.trim() == "Young (15-25)" }
                 val aAdult = bucketRecs.count { it.ageGroup?.trim() == "Adult (26-55)" }
                 val aElderly = bucketRecs.count { it.ageGroup?.trim() == "Elderly (56+)" }
 
-                // images processed for this bucket (count of image records)
                 val images = bucketRecs.size
 
-                // Build the per-minute batch map matching your sample shape
-                val batchKeyShort = keyFmt.format(Date(windowStart)) // e.g. 20250905_191400
-                val batchKeyTimestamp = ts.format(Date(windowStart)) // e.g. "2025-09-05 19:14:00"
-                // If you prefer no spaces/colons in key, you can use only batchKeyShort
+                // Build 3-minute batch entry
+                val batchKeyShort = keyFmt.format(Date(windowStart))
+                val batchKeyTimestamp = ts.format(Date(windowStart))
                 val batchKey = "batch_${batchKeyShort}_${batchKeyTimestamp}"
 
                 val batchMap = mapOf(
                     "head_count" to headCount,
                     "face_count" to faceCount,
                     "looking_3plus" to looking3plus,
+                    "unique_persons_in_batch" to uniquePersonsInBatch, // Added unique persons per batch
                     "gender_counts" to mapOf("Male" to gMale, "Female" to gFemale, "Unknown" to gUnknown),
                     "emotion_counts" to mapOf(
                         "neutral" to eNeutral,
@@ -152,21 +148,18 @@ class AnalyticsRepository(private val context: Context) {
                         "Elderly (56+)" to aElderly
                     ),
                     "images" to images,
-                    "time" to isoNoZone.format(Date(windowStart)) // "yyyy-MM-dd HH:mm:ss" (Asia/Kolkata)
+                    "time" to isoNoZone.format(Date(windowStart))
                 )
 
-                // put batch in cameraEntries
                 cameraEntries[batchKey] = batchMap
 
-                // aggregate hourly totals
+                // Aggregate hourly totals
                 batchesProcessed += 1
                 imagesProcessed += images
                 headClearTotal += headCount
-                // headClearIds left as 0 unless you compute head-clear IDs logic elsewhere
 
                 genderCountsTotal["Male"] = genderCountsTotal["Male"]!! + gMale
                 genderCountsTotal["Female"] = genderCountsTotal["Female"]!! + gFemale
-                // treat unknown as "Unknown"
                 genderCountsTotal["Unknown"] = genderCountsTotal["Unknown"]!! + gUnknown
 
                 emotionCountsTotal["neutral"] = emotionCountsTotal["neutral"]!! + eNeutral
@@ -183,14 +176,13 @@ class AnalyticsRepository(private val context: Context) {
                 ageCategoryCounts["Adult (26-55)"] = ageCategoryCounts["Adult (26-55)"]!! + aAdult
                 ageCategoryCounts["Elderly (56+)"] = ageCategoryCounts["Elderly (56+)"]!! + aElderly
 
-                // collect unique personIDs (if present)
+                // Collect unique personIDs across entire hour
                 bucketRecs.map { it.personID }.forEach { pid -> uniquePersonIdsAcrossHour.add(pid) }
-            } // end of minute buckets loop
+            }
 
-            // unique persons overall for this camera (union)
             val uniquePersonsOverall = uniquePersonIdsAcrossHour.size
 
-            // Build camera-level totals and put them into cameraEntries (these appear at same level as batch_* keys)
+            // Build camera totals
             val cameraTotalsMap = mutableMapOf<String, Any>(
                 "batches_processed" to batchesProcessed,
                 "images_processed" to imagesProcessed,
@@ -204,14 +196,10 @@ class AnalyticsRepository(private val context: Context) {
                 "last_updated" to isoInstantFmt.format(Date(latestRecTimestamp))
             )
 
-            // Merge totals at top of cameraEntries (so totals are siblings of batch_* keys)
-            // Ensure totals come before batches in JSON by inserting them first into a LinkedHashMap
             val cameraFinalMap = linkedMapOf<String, Any>()
             cameraTotalsMap.forEach { (k, v) -> cameraFinalMap[k] = v }
-            // then append the dynamic batch entries
             cameraEntries.forEach { (k, v) -> cameraFinalMap[k] = v }
 
-            // put this camera into camerasMap
             camerasMap[cameraId] = cameraFinalMap
         }
 

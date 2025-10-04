@@ -52,18 +52,13 @@
           "id": "9:4701601320483194554",
           "name": "createdAt",
           "type": 6
-        },
-        {
-          "id": "10:7337348671201050260",
-          "name": "lastSeen",
-          "type": 6
         }
       ],
       "relations": []
     },
     {
       "id": "2:5322169677917956621",
-      "lastPropertyId": "4:200102630707254336",
+      "lastPropertyId": "5:8959763366979704799",
       "name": "PersonRecord",
       "properties": [
         {
@@ -86,6 +81,11 @@
           "id": "4:200102630707254336",
           "name": "addTime",
           "type": 6
+        },
+        {
+          "id": "5:8959763366979704799",
+          "name": "lastSeen",
+          "type": 6
         }
       ],
       "relations": []
@@ -102,7 +102,8 @@
     3740748471272127177
   ],
   "retiredPropertyUids": [
-    765445784482171042
+    765445784482171042,
+    7337348671201050260
   ],
   "retiredRelationUids": [],
   "version": 1

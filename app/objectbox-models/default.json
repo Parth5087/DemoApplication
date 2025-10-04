@@ -58,7 +58,7 @@
     },
     {
       "id": "2:5322169677917956621",
-      "lastPropertyId": "4:200102630707254336",
+      "lastPropertyId": "5:8959763366979704799",
       "name": "PersonRecord",
       "properties": [
         {
@@ -98,7 +98,8 @@
   ],
   "retiredPropertyUids": [
     765445784482171042,
-    7337348671201050260
+    7337348671201050260,
+    8959763366979704799
   ],
   "retiredRelationUids": [],
   "version": 1
