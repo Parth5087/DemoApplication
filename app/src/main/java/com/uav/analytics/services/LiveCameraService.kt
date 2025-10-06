@@ -89,17 +89,19 @@ class LiveCameraDetectService : LifecycleService() {
             val action = intent?.action ?: return
             Log.d(TAG, "USB receiver got action: $action")
             when (action) {
-                UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
-                    val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
-                    if (device != null && isUsbCamera(device)) {
-                        Log.i(TAG, "USB attached -> schedule reinit")
-                        scheduleReinit()
-                    }
-                }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
                     if (device != null && isUsbCamera(device)) {
-                        Log.i(TAG, "USB detached -> schedule reinit")
+                        Log.i(TAG, "USB camera detached -> cleaning up camera resources")
+                        // Only cleanup camera, don't stop service
+                        cleanupCamera()
+                    }
+                }
+                UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                    val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
+                    if (device != null && isUsbCamera(device)) {
+                        Log.i(TAG, "USB camera attached -> reinitializing camera")
+                        // Reinitialize camera if service is still running
                         scheduleReinit()
                     }
                 }

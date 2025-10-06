@@ -1,58 +1,72 @@
 package com.uav.analytics
 
 import android.app.AlertDialog
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.widget.Button
 import android.widget.EditText
+import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.uav.analytics.services.CameraBackgroundService
-import com.uav.analytics.services.NetworkModule
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.TimeoutCancellationException
+import com.uav.analytics.services.LiveCameraDetectService
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 
 class LauncherActivity : AppCompatActivity() {
-    private val TAG = "LauncherActivity"
-    @Volatile private var launched = false
+    companion object{
+        private const val TAG = "LauncherActivity"
+    }
 
+    @Volatile private var launched = false
     private lateinit var permissionLauncher: ActivityResultLauncher<String>
 
     private val prefs: SharedPreferences by lazy {
         getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
     }
 
+    // ANR protection
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var anrWatchdog: Runnable? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_launcher)
-        Log.w(TAG, "Start Activity")
+        Log.w(TAG, "LauncherActivity created")
+
+        // Start ANR protection
+        startAnrProtection()
 
         permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
             if (isGranted) {
                 showCameraIdDialogIfNeeded { proceedWithLaunch() }
             } else {
-                Log.w(TAG, "Camera permission denied — cannot proceed")
-                // Optionally show a Toast or dialog explaining permission is required
-                finish()
+                Log.w(TAG, "Camera permission denied")
+                finishWithError("Camera permission required")
             }
         }
+        checkPermissionsAndProceed()
+    }
 
+    private fun checkPermissionsAndProceed() {
         lifecycleScope.launch {
-            val hasPermission = ContextCompat.checkSelfPermission(this@LauncherActivity, android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+            val hasPermission = ContextCompat.checkSelfPermission(
+                this@LauncherActivity,
+                android.Manifest.permission.CAMERA
+            ) == PackageManager.PERMISSION_GRANTED
+
             if (hasPermission) {
                 showCameraIdDialogIfNeeded { proceedWithLaunch() }
             } else {
@@ -87,7 +101,6 @@ class LauncherActivity : AppCompatActivity() {
                 onComplete()
             } else {
                 etCameraId.error = "Please enter a valid Camera ID"
-                etCameraId.requestFocus()
             }
         }
 
@@ -97,120 +110,206 @@ class LauncherActivity : AppCompatActivity() {
     private fun proceedWithLaunch() {
         if (launched) return
 
-        // Kick off non-blocking startup flow
-        lifecycleScope.launch {
-            // Run fetch+activate with timeout on IO dispatcher, but don't block UI.
-            val success = withContext(Dispatchers.IO) {
-                try {
-                    // Wait up to 10s for remote config; treat timeout as failure
-                    withTimeout(10_000L) {
-                        fetchAndActivateAsync()
-                    }
-                } catch (te: TimeoutCancellationException) {
-                    Log.w(TAG, "RemoteConfig fetch timed out after 10s")
-                    false
-                } catch (e: Exception) {
-                    Log.e(TAG, "RemoteConfig fetch threw: ${e.message}", e)
-                    false
-                }
-            }
-
-            // Now switch to Main to open destination / start services and finish activity
-            withContext(Dispatchers.Main) {
-                if (!launched) {
-                    if (success) {
-                        try {
-                            val dest = RemoteConfigHelper.startDestination()
-                            NetworkModule.applyStartDestination(dest)
-                            Log.w(TAG, "Start Activity - calling openDestination() with remote config: $dest")
-                            openDestination(dest)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed to open destination from remote config: ${e.message}", e)
-                            openDefaultService()
-                        }
-                    } else {
-                        Log.w(TAG, "RemoteConfig fetch failed — opening default LiveCameraDetectService")
-                        openDefaultService()
-                    }
-                } else {
-                    Log.d(TAG, "Already launched; skipping remote config result handling")
-                }
-            }
-        }
-
-        // Defensive fallback: if for some reason coroutine was cancelled or blocked, still ensure default after 10s.
-        // This fallback simply schedules a check on main thread; it doesn't block.
-        Handler(Looper.getMainLooper()).postDelayed({
+        mainHandler.postDelayed({
             if (!launched) {
-                Log.w(TAG, "Fallback timeout triggered — opening default LiveCameraDetectService")
-                openDefaultService()
+                launched = true
+                stopAnrProtection()
+
+                val cachedDestination = getCachedDestination()
+                startServiceByDestination(cachedDestination)
+
+                fetchFreshRemoteConfigInBackground {
+                    Log.d(TAG, "RemoteConfig background task completed - finishing activity")
+                    finish()
+                }
             }
-        }, 10_000L)
+        }, 8000)
     }
 
-    /**
-     * Bridge helper: convert callback-based fetchAndActivate to suspending boolean result.
-     * Modify if RemoteConfigHelper already offers a suspending API; use that directly.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private suspend fun fetchAndActivateAsync(): Boolean = suspendCancellableCoroutine { cont ->
+    private fun getCachedDestination(): String {
+        return prefs.getString("cached_destination", "live_camera_detect") ?: "live_camera_detect"
+    }
+
+    private fun startServiceByDestination(destination: String) {
+        Log.d(TAG, "Starting service for destination: $destination")
+
         try {
-            RemoteConfigHelper.fetchAndActivate { success ->
-                // Ensure resume only once and on coroutine's context
-                if (cont.isActive) {
-                    cont.resume(success) {}
+            when (destination.lowercase()) {
+                "auto_photo_capture" -> {
+                    // Stop any running LiveCameraDetectService first
+                    stopService(Intent(this, LiveCameraDetectService::class.java))
+                    val serviceIntent = Intent(this, CameraBackgroundService::class.java)
+                    ContextCompat.startForegroundService(this, serviceIntent)
+                    Log.d(TAG, "Started CameraBackgroundService for auto_photo_capture")
+                }
+                "live_camera_detect" -> {
+                    // Stop any running CameraBackgroundService first
+                    stopService(Intent(this, CameraBackgroundService::class.java))
+                    val serviceIntent = Intent(this, LiveCameraDetectService::class.java)
+                    ContextCompat.startForegroundService(this, serviceIntent)
+                    Log.d(TAG, "Started LiveCameraDetectService for live_camera_detect")
+                }
+                else -> {
+                    // Fallback to default service
+                    Log.w(TAG, "Unknown destination '$destination' - falling back to LiveCameraDetectService")
+                    stopService(Intent(this, CameraBackgroundService::class.java))
+                    val serviceIntent = Intent(this, LiveCameraDetectService::class.java)
+                    ContextCompat.startForegroundService(this, serviceIntent)
                 }
             }
         } catch (e: Exception) {
-            if (cont.isActive) cont.resume(false) {}
-        }
-
-        // If coroutine is cancelled, there's no built-in cancellation in many callback APIs.
-        // Optionally, you can add cancellation cleanup here if RemoteConfigHelper supports it.
-        cont.invokeOnCancellation {
-            Log.w(TAG, "fetchAndActivateAsync coroutine cancelled")
+            Log.e(TAG, "Failed to start service for destination '$destination': ${e.message}")
+            // Ultimate fallback
+            try {
+                stopService(Intent(this, CameraBackgroundService::class.java))
+                val serviceIntent = Intent(this, LiveCameraDetectService::class.java)
+                startService(serviceIntent)
+            } catch (e2: Exception) {
+                Log.e(TAG, "Fallback service start also failed: ${e2.message}")
+            }
         }
     }
 
-    private fun openDestination(dest: String) {
-        if (launched) return
-        launched = true
+    private fun fetchFreshRemoteConfigInBackground(onComplete: () -> Unit) {
+        Log.d(TAG, "Starting background RemoteConfig fetch...")
 
-        when (val destination = dest.lowercase()) {
-            "auto_photo_capture" -> {
-                val serviceIntent = Intent(this, CameraBackgroundService::class.java)
-                ContextCompat.startForegroundService(this, serviceIntent)
-                Log.d(TAG, "Started CameraService for auto_photo_capture")
+        RemoteConfigHelper.fetchAndActivate { success ->
+            Log.d(TAG, "RemoteConfig fetch completed - success: $success")
+
+            if (success) {
+                val newDestination = RemoteConfigHelper.startDestination()
+                Log.d(TAG, "RemoteConfig destination: $newDestination")
+
+                val oldDestination = getCachedDestination()
+
+                // Update cache for next launch
+                prefs.edit().putString("cached_destination", newDestination).apply()
+
+                // Restart service if destination changed
+                if (oldDestination != newDestination) {
+                    Log.i(TAG, "Destination changed: $oldDestination -> $newDestination")
+                    restartServiceWithNewDestination(newDestination)
+                }
             }
-            "live_camera_detect" -> {
-//                val serviceIntent = Intent(this, LiveCameraDetectService::class.java)
-//                ContextCompat.startForegroundService(this, serviceIntent)
-                startActivity(Intent(this, MainActivity::class.java))
-                Log.d("OpenDest", "Started LiveCameraService for live_camera_detect")
-            }
-            else -> {
-                Log.d(TAG, "Unknown destination '$destination' — starting default LiveCameraService")
-                openDefaultService()
-            }
+
+            // Single onComplete call
+            Log.d(TAG, "Finishing activity after RemoteConfig")
+            onComplete()
         }
-        finish()
     }
 
-    private fun openDefaultService() {
-        if (launched) return
-        launched = true
+    private fun restartServiceWithNewDestination(newDestination: String) {
+        // Use application context to start service since activity might be finished
+        val appContext = applicationContext
 
-        startActivity(Intent(this, MainActivity::class.java))
+        mainHandler.post {
+            try {
+                Log.i(TAG, "Immediately restarting service with new destination: $newDestination")
+
+                when (newDestination.lowercase()) {
+                    "auto_photo_capture" -> {
+                        // Stop LiveCameraDetectService and start CameraBackgroundService
+                        appContext.stopService(Intent(appContext, LiveCameraDetectService::class.java))
+
+                        val serviceIntent = Intent(appContext, CameraBackgroundService::class.java)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            appContext.startForegroundService(serviceIntent)
+                        } else {
+                            appContext.startService(serviceIntent)
+                        }
+                        Log.d(TAG, "Service switched to CameraBackgroundService")
+                    }
+                    "live_camera_detect" -> {
+                        // Stop CameraBackgroundService and start LiveCameraDetectService
+                        appContext.stopService(Intent(appContext, CameraBackgroundService::class.java))
+
+                        val serviceIntent = Intent(appContext, LiveCameraDetectService::class.java)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            appContext.startForegroundService(serviceIntent)
+                        } else {
+                            appContext.startService(serviceIntent)
+                        }
+                        Log.d(TAG, "Service switched to LiveCameraDetectService")
+                    }
+                }
+
+                // Optional: Show a notification about the service change
+                showServiceChangeNotification(newDestination)
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to restart service with new destination: ${e.message}")
+            }
+        }
+    }
+
+    private fun showServiceChangeNotification(newDestination: String) {
+        try {
+            val serviceName = when (newDestination.lowercase()) {
+                "auto_photo_capture" -> "Auto Photo Capture"
+                "live_camera_detect" -> "Live Camera Detection"
+                else -> "Camera Service"
+            }
+
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    "service_change",
+                    "Service Changes",
+                    NotificationManager.IMPORTANCE_LOW
+                )
+                notificationManager.createNotificationChannel(channel)
+            }
+
+            val notification = NotificationCompat.Builder(this, "service_change")
+                .setContentTitle("Service Updated")
+                .setContentText("Switched to $serviceName")
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setAutoCancel(true)
+                .build()
+
+            notificationManager.notify(103, notification)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to show service change notification: ${e.message}")
+        }
+    }
+
+    // ANR Protection Methods
+    private fun startAnrProtection() {
+        anrWatchdog = Runnable {
+            if (!launched) {
+                Log.w(TAG, "ANR PROTECTION: Forcing service start after timeout")
+                launched = true
+                val cachedDestination = getCachedDestination()
+                startServiceByDestination(cachedDestination)
+                finish()
+            }
+        }
+        mainHandler.postDelayed(anrWatchdog!!, 15000L) // 15 second protection
+    }
+
+    private fun stopAnrProtection() {
+        anrWatchdog?.let {
+            mainHandler.removeCallbacks(it)
+            anrWatchdog = null
+        }
+    }
+
+    private fun finishWithError(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        stopAnrProtection()
         finish()
     }
 
     override fun onDestroy() {
-        // If destroyed before launching any service, start default service.
+        stopAnrProtection()
+
+        // Last resort: if we're being destroyed without launching, start service
         if (!launched) {
-            Log.w(TAG, "Activity destroyed before launch — opening default service")
-            // Start default service on main thread — don't call blocking code here.
-            openDefaultService()
+            Log.w(TAG, "Activity destroyed without launch - starting service as fallback")
+            val cachedDestination = getCachedDestination()
+            startServiceByDestination(cachedDestination)
         }
+
         super.onDestroy()
     }
 }
