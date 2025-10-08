@@ -1,6 +1,8 @@
 package com.uav.analytics.services
 
 import com.uav.analytics.domain.analytics.HourlyPayload
+import com.uav.analytics.models.RegisterDeviceRequest
+import com.uav.analytics.models.RegisterDeviceResponse
 import okhttp3.MultipartBody
 import okhttp3.ResponseBody
 import retrofit2.Response
@@ -24,4 +26,9 @@ interface CrowdApi {
         @Query("camera_id") cameraIdQuery: String,                    // ?camera_id=cam1
         @Part file: MultipartBody.Part                              // file part
     ): Response<ResponseBody>
+
+    @POST("store-device-data")
+    suspend fun registerDevice(
+        @Body request: RegisterDeviceRequest
+    ): Response<RegisterDeviceResponse>
 }

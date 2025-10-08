@@ -7,8 +7,8 @@ import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
 
 object NetworkModule {
-    private const val BASE_URL_AUTO_PHOTO = "https://analytics.untitledad.in/"
-    private const val BASE_URL_LIVE_DETECT = "https://analytics.untitledad.in/"
+    private const val BASE_URL_AUTO_PHOTO = "http://analytics.untitledad.in/api/"
+    private const val BASE_URL_LIVE_DETECT = "http://analytics.untitledad.in/api/"
 
     @Volatile private var baseUrl: String = BASE_URL_AUTO_PHOTO
     @Volatile private var retrofitRef: Retrofit? = null

@@ -1,5 +1,6 @@
 package com.uav.analytics
 
+import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -11,9 +12,12 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.util.Log
+import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
@@ -21,8 +25,13 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.google.gson.Gson
+import com.uav.analytics.models.ErrorResponse
+import com.uav.analytics.models.RegisterDeviceRequest
 import com.uav.analytics.services.CameraBackgroundService
 import com.uav.analytics.services.LiveCameraDetectService
+import com.uav.analytics.services.NetworkModule
+import com.uav.analytics.utils.ResponseUtils
 import kotlinx.coroutines.launch
 
 class LauncherActivity : AppCompatActivity() {
@@ -36,6 +45,10 @@ class LauncherActivity : AppCompatActivity() {
     private val prefs: SharedPreferences by lazy {
         getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
     }
+
+    // Track completion states
+    private var permissionGranted = false
+    private var cameraIdSaved = false
 
     // ANR protection
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -51,13 +64,30 @@ class LauncherActivity : AppCompatActivity() {
 
         permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
             if (isGranted) {
-                showCameraIdDialogIfNeeded { proceedWithLaunch() }
+                Log.d(TAG, "Camera permission granted")
+                permissionGranted = true
+                // After permission granted, show camera ID dialog
+                showCameraIdDialogIfNeeded()
             } else {
                 Log.w(TAG, "Camera permission denied")
                 finishWithError("Camera permission required")
             }
         }
+
+        // Start the process
         checkPermissionsAndProceed()
+    }
+
+    @SuppressLint("HardwareIds")
+    private fun getAndroidId(context: Context): String? {
+        return try {
+            val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+            Log.d(TAG, "Android ID: $androidId")
+            androidId
+        } catch (e: Exception) {
+            Log.e(TAG, "Error retrieving Android ID", e)
+            null
+        }
     }
 
     private fun checkPermissionsAndProceed() {
@@ -68,39 +98,105 @@ class LauncherActivity : AppCompatActivity() {
             ) == PackageManager.PERMISSION_GRANTED
 
             if (hasPermission) {
-                showCameraIdDialogIfNeeded { proceedWithLaunch() }
+                Log.d(TAG, "Camera permission already granted")
+                permissionGranted = true
+                showCameraIdDialogIfNeeded()
             } else {
                 permissionLauncher.launch(android.Manifest.permission.CAMERA)
             }
         }
     }
 
-    private fun showCameraIdDialogIfNeeded(onComplete: () -> Unit) {
+    private fun showCameraIdDialogIfNeeded() {
+        Log.d(TAG, "showCameraIdDialogIfNeeded called - permissionGranted: $permissionGranted")
+
         val savedCameraId = prefs.getString("camera_id", null)
         if (savedCameraId != null) {
             Log.d(TAG, "Camera ID already saved: $savedCameraId")
-            onComplete()
+            cameraIdSaved = true
+            // Both conditions are met, proceed to launch
+            proceedWithLaunch()
             return
         }
+
+        // If we don't have permission yet, wait for it
+        if (!permissionGranted) {
+            Log.d(TAG, "Waiting for permission before showing camera ID dialog")
+            return
+        }
+        val androidId = getAndroidId(this) ?: "Unavailable"
 
         val dialogView = layoutInflater.inflate(R.layout.dialog_camera_id, null)
         val etCameraId = dialogView.findViewById<EditText>(R.id.et_camera_id)
         val btnSave = dialogView.findViewById<Button>(R.id.btn_save)
+        val progressBar = dialogView.findViewById<ProgressBar>(R.id.progressBar) // Add this to your dialog layout
 
         val dialog = AlertDialog.Builder(this)
+            .setTitle("Device ID: $androidId")
             .setView(dialogView)
             .setCancelable(false)
             .create()
 
         btnSave.setOnClickListener {
             val cameraId = etCameraId.text.toString().trim()
-            if (cameraId.isNotEmpty()) {
-                prefs.edit().putString("camera_id", cameraId).apply()
-                Log.d(TAG, "Camera ID saved: $cameraId")
-                dialog.dismiss()
-                onComplete()
-            } else {
+
+            if (cameraId.isEmpty()) {
                 etCameraId.error = "Please enter a valid Camera ID"
+                return@setOnClickListener
+            }
+
+            // Show loading state
+            btnSave.isEnabled = false
+            btnSave.text = getString(R.string.registering)
+            progressBar.visibility = View.VISIBLE
+
+            Log.d(TAG, "Attempting device registration: camera=$cameraId, device=$androidId")
+
+            // Execute registration in coroutine
+            lifecycleScope.launch {
+                try {
+                    val request = RegisterDeviceRequest(
+                        cameraId = cameraId,
+                        deviceId = androidId
+                    )
+
+                    val response = NetworkModule.api.registerDevice(request)
+                    Log.d(TAG, "Device registration response: ${response.code()} - ${response.message()}")
+
+                    if (response.isSuccessful) {
+                        // Registration successful
+                        val registerResponse = response.body()
+                        Log.d(TAG, "Device registration successful: $registerResponse")
+
+                        prefs.edit().putString("camera_id", cameraId).apply()
+                        Log.d(TAG, "Camera ID saved: $cameraId")
+                        cameraIdSaved = true
+
+                        dialog.dismiss()
+                        proceedWithLaunch()
+                    } else {
+                        // Registration failed - parse error response
+                        val errorBody = response.errorBody()?.string()
+                        Log.e(TAG, "Device registration failed: ${response.code()} - $errorBody")
+
+                        val errorMessage = ResponseUtils.parseErrorMessage(errorBody, response.code())
+
+                        runOnUiThread {
+                            btnSave.isEnabled = true
+                            btnSave.text = getString(R.string.save)
+                            progressBar.visibility = View.GONE
+                            etCameraId.error = errorMessage
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Device registration error", e)
+                    runOnUiThread {
+                        btnSave.isEnabled = true
+                        btnSave.text = getString(R.string.save)
+                        progressBar.visibility = View.GONE
+                        etCameraId.error = "Network error: ${e.message}"
+                    }
+                }
             }
         }
 
@@ -108,22 +204,33 @@ class LauncherActivity : AppCompatActivity() {
     }
 
     private fun proceedWithLaunch() {
-        if (launched) return
+        Log.d(TAG, "proceedWithLaunch called - launched: $launched, permission: $permissionGranted, cameraID: $cameraIdSaved")
+
+        if (launched) {
+            Log.d(TAG, "Already launched, skipping")
+            return
+        }
+
+        // Double check both conditions
+        if (!permissionGranted || !cameraIdSaved) {
+            Log.w(TAG, "Cannot proceed - missing conditions. Permission: $permissionGranted, CameraID: $cameraIdSaved")
+            return
+        }
+
+        launched = true
+        stopAnrProtection()
+
+        Log.d(TAG, "All conditions met, proceeding with launch")
 
         mainHandler.postDelayed({
-            if (!launched) {
-                launched = true
-                stopAnrProtection()
+            val cachedDestination = getCachedDestination()
+            startServiceByDestination(cachedDestination)
 
-                val cachedDestination = getCachedDestination()
-                startServiceByDestination(cachedDestination)
-
-                fetchFreshRemoteConfigInBackground {
-                    Log.d(TAG, "RemoteConfig background task completed - finishing activity")
-                    finish()
-                }
+            fetchFreshRemoteConfigInBackground {
+                Log.d(TAG, "RemoteConfig background task completed - finishing activity")
+                finish()
             }
-        }, 8000)
+        }, 2000)
     }
 
     private fun getCachedDestination(): String {
@@ -277,14 +384,23 @@ class LauncherActivity : AppCompatActivity() {
     private fun startAnrProtection() {
         anrWatchdog = Runnable {
             if (!launched) {
-                Log.w(TAG, "ANR PROTECTION: Forcing service start after timeout")
-                launched = true
-                val cachedDestination = getCachedDestination()
-                startServiceByDestination(cachedDestination)
-                finish()
+                Log.w(TAG, "ANR PROTECTION: Checking if we can proceed despite timeout")
+                // Even in ANR protection, only proceed if we have both conditions
+                if (permissionGranted && cameraIdSaved) {
+                    Log.w(TAG, "ANR PROTECTION: Forcing service start after timeout")
+                    launched = true
+                    val cachedDestination = getCachedDestination()
+                    startServiceByDestination(cachedDestination)
+                    finish()
+                } else {
+                    Log.w(TAG, "ANR PROTECTION: Cannot proceed - missing permission or camera ID")
+                    Log.w(TAG, "Permission: $permissionGranted, CameraID: $cameraIdSaved")
+                    // Extend the timeout since we're waiting for user input
+                    mainHandler.postDelayed(anrWatchdog!!, 10000L) // Another 10 seconds
+                }
             }
         }
-        mainHandler.postDelayed(anrWatchdog!!, 15000L) // 15 second protection
+        mainHandler.postDelayed(anrWatchdog!!, 30000L) // 30 second protection for user input
     }
 
     private fun stopAnrProtection() {
@@ -303,11 +419,13 @@ class LauncherActivity : AppCompatActivity() {
     override fun onDestroy() {
         stopAnrProtection()
 
-        // Last resort: if we're being destroyed without launching, start service
-        if (!launched) {
-            Log.w(TAG, "Activity destroyed without launch - starting service as fallback")
+        // Last resort: if we're being destroyed without launching, only start service if we have both conditions
+        if (!launched && permissionGranted && cameraIdSaved) {
+            Log.w(TAG, "Activity destroyed with both conditions met - starting service as fallback")
             val cachedDestination = getCachedDestination()
             startServiceByDestination(cachedDestination)
+        } else if (!launched) {
+            Log.w(TAG, "Activity destroyed without both conditions - permission: $permissionGranted, cameraID: $cameraIdSaved")
         }
 
         super.onDestroy()

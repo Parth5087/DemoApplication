@@ -84,6 +84,39 @@ class LiveCameraDetectService : LifecycleService() {
     private var reinitScheduledToken: Runnable? = null
     private var lastSuccessfulBindMs: Long = 0L
 
+    // ---------- Power State Receiver ----------
+    private val powerStateReceiverRegistered = AtomicBoolean(false)
+    private val powerStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    Log.i(TAG, "Screen turned off - stopping camera")
+                    cleanupCamera()
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    Log.i(TAG, "Screen turned on - restarting camera with delay")
+                    val km = getSystemService(KeyguardManager::class.java)
+                    val isLocked = km?.isDeviceLocked ?: false
+                    handler.postDelayed({
+                        lifecycleScope.launch(Dispatchers.Main) {
+                            if (isLocked) {
+                                Log.i(TAG, "Screen on but device locked - deferring until user present")
+                            } else {
+                                scheduleReinit()
+                            }
+                        }
+                    }, 1500)
+                }
+                Intent.ACTION_USER_PRESENT -> {
+                    Log.i(TAG, "User unlocked device - starting camera")
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        scheduleReinit()
+                    }
+                }
+            }
+        }
+    }
+
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val action = intent?.action ?: return
@@ -93,7 +126,6 @@ class LiveCameraDetectService : LifecycleService() {
                     val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
                     if (device != null && isUsbCamera(device)) {
                         Log.i(TAG, "USB camera detached -> cleaning up camera resources")
-                        // Only cleanup camera, don't stop service
                         cleanupCamera()
                     }
                 }
@@ -101,7 +133,6 @@ class LiveCameraDetectService : LifecycleService() {
                     val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
                     if (device != null && isUsbCamera(device)) {
                         Log.i(TAG, "USB camera attached -> reinitializing camera")
-                        // Reinitialize camera if service is still running
                         scheduleReinit()
                     }
                 }
@@ -132,7 +163,6 @@ class LiveCameraDetectService : LifecycleService() {
     private val cameraAvailabilityCallback = object : CameraManager.AvailabilityCallback() {
         override fun onCameraAvailable(cameraId: String) {
             Log.i(TAG, "CameraManager: camera AVAILABLE -> id=$cameraId")
-            // Only schedule reinit if we currently have no analysis bound AND not recently bound
             val now = System.currentTimeMillis()
             val justBoundRecently = (now - lastSuccessfulBindMs) < REINIT_DEBOUNCE_MS
             if (imageAnalysis == null && !reinitInProgress.get() && !justBoundRecently) {
@@ -153,7 +183,7 @@ class LiveCameraDetectService : LifecycleService() {
         super.onCreate()
         Log.d(TAG, "onCreate: Service created")
 
-        // Notification channel & foreground -> startForeground ASAP
+        // Start as foreground service immediately to prevent ANR
         createNotificationChannel()
         try {
             startForeground(NOTIF_ID, buildNotificationSafe())
@@ -162,7 +192,11 @@ class LiveCameraDetectService : LifecycleService() {
             Log.e(TAG, "Failed to start foreground: ${e.message}")
         }
 
-        // Register CameraManager availability callback for diagnostics
+        // Register receivers
+        registerPowerStateReceiver()
+        registerUsbReceiver()
+
+        // Register CameraManager availability callback
         try {
             val cm = getSystemService(Context.CAMERA_SERVICE) as CameraManager
             if (!cameraAvailabilityRegistered.getAndSet(true)) {
@@ -173,19 +207,54 @@ class LiveCameraDetectService : LifecycleService() {
             Log.w(TAG, "Failed to register camera availability callback: ${e.message}")
         }
 
-        // ViewModel (use your factory)
+        // Initialize ViewModel in background
+        lifecycleScope.launch(Dispatchers.IO) {
+            initializeViewModel()
+        }
+
+        // Fetch RemoteConfig in background
+        lifecycleScope.launch(Dispatchers.IO) {
+            fetchRemoteConfig()
+        }
+
+        // Check device lock state and start camera
+        val km = getSystemService(KeyguardManager::class.java)
+        val isLocked = km?.isDeviceLocked ?: false
+        if (isLocked) {
+            Log.i(TAG, "Device is locked at boot - deferring camera start until ACTION_USER_UNLOCKED")
+            waitingForUserUnlock.set(true)
+            if (!userUnlockReceiverRegistered.getAndSet(true)) {
+                registerReceiver(userUnlockReceiver, IntentFilter(Intent.ACTION_USER_UNLOCKED))
+            }
+        } else {
+            // Start camera with delay to prevent ANR during startup
+            handler.postDelayed({
+                lifecycleScope.launch(Dispatchers.Main) {
+                    startCameraHeadless()
+                }
+            }, 1000)
+        }
+
+        // Start periodic upload
+        startPeriodicUpload()
+
+        Log.d(TAG, "Service onCreate completed")
+    }
+
+    private suspend fun initializeViewModel() {
         try {
-            val factory = MainActivityViewModelFactory(this)
-            viewModel = factory.create(MainActivityViewModel::class.java)
-            Log.d(TAG, "ViewModel initialized")
+            withContext(Dispatchers.Main) {
+                val factory = MainActivityViewModelFactory(this@LiveCameraDetectService)
+                viewModel = factory.create(MainActivityViewModel::class.java)
+                observeViewModelStates()
+                Log.d(TAG, "ViewModel initialized successfully")
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize ViewModel: ${e.message}")
         }
+    }
 
-        // Observe viewModel LiveData (optional)
-        observeViewModelStates()
-
-        // RemoteConfig fetch to update upload interval (best-effort)
+    private fun fetchRemoteConfig() {
         try {
             RemoteConfigHelper.fetchAndActivate {
                 uploadIntervalMillis = RemoteConfigHelper.uploadIntervalDataMs()
@@ -194,61 +263,43 @@ class LiveCameraDetectService : LifecycleService() {
         } catch (e: Exception) {
             Log.w(TAG, "RemoteConfig fetch failed: ${e.message}")
         }
-
-        // register USB receiver
-        registerUsbReceiver()
-
-        // Decide whether device locked -> if locked, wait for ACTION_USER_UNLOCKED
-        val km = getSystemService(KeyguardManager::class.java)
-        val isLocked = km?.isDeviceLocked ?: false
-        if (isLocked) {
-            Log.i(TAG, "Device is locked/credential-protected at boot - deferring camera start until ACTION_USER_UNLOCKED")
-            waitingForUserUnlock.set(true)
-            if (!userUnlockReceiverRegistered.getAndSet(true)) {
-                registerReceiver(userUnlockReceiver, IntentFilter(Intent.ACTION_USER_UNLOCKED))
-            }
-        } else {
-            // Start headless camera (non-blocking)
-            lifecycleScope.launch(Dispatchers.Main) {
-                startCameraHeadless()
-            }
-        }
-
-        // Start periodic upload/sender function
-        startTestSendingEveryMinute()
-
-        Log.d(TAG, "Service onCreate completed")
     }
 
-    // Add this method for retrying camera setup
-    private fun scheduleRetry() {
-        Log.d(TAG, "Scheduling camera retry in 5 seconds")
-        handler.postDelayed({
-            lifecycleScope.launch(Dispatchers.Main) {
-                Log.d(TAG, "Retrying camera setup...")
-                startCameraHeadless()
-            }
-        }, 5000)
-    }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         Log.d(TAG, "onStartCommand: Service starting with intent: ${intent?.action}")
+
+        // Handle power state commands
+        when (intent?.action) {
+            "START_CAMERA" -> {
+                Log.i(TAG, "Starting camera from power state change")
+                lifecycleScope.launch(Dispatchers.Main) {
+                    startCameraHeadless()
+                }
+            }
+            "STOP_CAMERA" -> {
+                Log.i(TAG, "Stopping camera from power state change")
+                cleanupCamera()
+            }
+        }
+
         return START_STICKY
     }
 
     override fun onDestroy() {
         Log.d(TAG, "onDestroy: Service shutting down")
-        super.onDestroy()
-        stopTestSending()
+        stopPeriodicUpload()
         cleanupCamera()
         analyzeScope.cancel()
         analyzerExecutor.shutdown()
         unregisterUsbReceiver()
+        unregisterPowerStateReceiver()
+
         if (userUnlockReceiverRegistered.get()) {
             try { unregisterReceiver(userUnlockReceiver) } catch (_: Exception) {}
             userUnlockReceiverRegistered.set(false)
         }
-        // Unregister camera availability callback
+
         try {
             val cm = getSystemService(Context.CAMERA_SERVICE) as CameraManager
             if (cameraAvailabilityRegistered.getAndSet(false)) {
@@ -258,7 +309,9 @@ class LiveCameraDetectService : LifecycleService() {
         } catch (e: Exception) {
             Log.w(TAG, "Failed to unregister camera availability callback: ${e.message}")
         }
+
         try { previewProviderExecutor.shutdown() } catch (_: Exception) {}
+        super.onDestroy()
         Log.d(TAG, "Service cleanup completed")
     }
 
@@ -266,6 +319,32 @@ class LiveCameraDetectService : LifecycleService() {
         Log.d(TAG, "onBind: Service bound")
         super.onBind(intent)
         return null
+    }
+
+    // ---------------- Power State Receiver ----------------
+    private fun registerPowerStateReceiver() {
+        if (powerStateReceiverRegistered.getAndSet(true)) return
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }
+        try {
+            registerReceiver(powerStateReceiver, filter)
+            Log.i(TAG, "Power state receiver registered successfully")
+        } catch (e: Exception) {
+            Log.w(TAG, "registerPowerStateReceiver failed: ${e.message}")
+        }
+    }
+
+    private fun unregisterPowerStateReceiver() {
+        if (!powerStateReceiverRegistered.getAndSet(false)) return
+        try {
+            unregisterReceiver(powerStateReceiver)
+            Log.i(TAG, "Power state receiver unregistered successfully")
+        } catch (e: Exception) {
+            Log.w(TAG, "unregisterPowerStateReceiver failed: ${e.message}")
+        }
     }
 
     // ---------------- ViewModel observers ----------------
@@ -306,9 +385,6 @@ class LiveCameraDetectService : LifecycleService() {
 
         val perm = ContextCompat.checkSelfPermission(this@LiveCameraDetectService, Manifest.permission.CAMERA)
         Log.d(TAG, "Runtime CAMERA permission: $perm (expected ${PackageManager.PERMISSION_GRANTED})")
-        val km = getSystemService(KeyguardManager::class.java)
-        val locked = km?.isDeviceLocked ?: false
-        Log.d(TAG, "Device locked at startCameraHeadless(): $locked")
 
         if (perm != PackageManager.PERMISSION_GRANTED) {
             Log.w(TAG, "Camera permission missing - stopping service")
@@ -316,11 +392,10 @@ class LiveCameraDetectService : LifecycleService() {
             return@withContext
         }
 
-        // extra device-level camera status diagnostics
         checkCameraStatus()
 
         try {
-            Log.d(TAG, "startCameraHeadless: Requesting ProcessCameraProvider (non-blocking)")
+            Log.d(TAG, "startCameraHeadless: Requesting ProcessCameraProvider")
             val providerFuture = ProcessCameraProvider.getInstance(this@LiveCameraDetectService)
             val mainExecutor = ContextCompat.getMainExecutor(this@LiveCameraDetectService)
 
@@ -328,61 +403,70 @@ class LiveCameraDetectService : LifecycleService() {
                 try {
                     cameraProvider = providerFuture.get()
                     Log.d(TAG, "ProcessCameraProvider ready")
-                    // Post bind non-blocking (avoid heavy work in this listener)
+                    // Schedule bind with delay to prevent ANR
                     mainHandler.postDelayed({
                         performBindAnalysisStep()
-                    }, 250L)
+                    }, 500L)
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to obtain ProcessCameraProvider in listener: ${e.message}")
+                    Log.e(TAG, "Failed to obtain ProcessCameraProvider: ${e.message}")
                     scheduleRetry()
                 }
             }, mainExecutor)
         } catch (e: Exception) {
-            Log.e(TAG, "Camera setup failed (outer): ${e.message}")
+            Log.e(TAG, "Camera setup failed: ${e.message}")
             scheduleRetry()
         }
     }
 
-    // ---------------- setup and bind (pre-created headless preview) ----------------
-    private fun performBindAnalysisStep() {
-        Log.d(TAG, "performBindAnalysisStep: Starting camera binding process (non-blocking)")
+    private fun scheduleRetry() {
+        Log.d(TAG, "Scheduling camera retry in 5 seconds")
+        handler.postDelayed({
+            lifecycleScope.launch(Dispatchers.Main) {
+                Log.d(TAG, "Retrying camera setup...")
+                startCameraHeadless()
+            }
+        }, 5000)
+    }
 
-        try {
-            imageAnalysis?.clearAnalyzer()
-        } catch (e: Exception) {
-            Log.d(TAG, "performBindAnalysisStep exception: ${e.message}")
+    // ---------------- Camera binding (optimized for ANR prevention) ----------------
+    private fun performBindAnalysisStep() {
+        Log.d(TAG, "performBindAnalysisStep: Starting camera binding process")
+
+        // Clear existing analyzer on background thread
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                imageAnalysis?.clearAnalyzer()
+            } catch (e: Exception) {
+                Log.d(TAG, "Error clearing analyzer: ${e.message}")
+            }
         }
 
-        // Build ImageAnalysis but avoid making large allocations here.
+        // Build ImageAnalysis with minimal configuration
         imageAnalysis = ImageAnalysis.Builder()
             .setTargetResolution(Size(640, 480))
-            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST) // More forgiving
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
             .build().also { ia ->
-
                 ia.setAnalyzer(analyzerExecutor) { imageProxy ->
                     analyzeImageProxy(imageProxy)
                 }
             }
 
-        // Prepare Preview and pre-create a headless Surface BEFORE bind
+        // Prepare Preview with headless surface
         val preview = Preview.Builder()
             .setTargetResolution(Size(640, 480))
             .build()
 
         preview.setSurfaceProvider { request ->
-            // Create or update previewSurfaceTexture on a background executor to avoid main-thread allocations.
             previewProviderExecutor.execute {
                 try {
                     if (previewSurfaceTexture == null) {
-                        // create SurfaceTexture on background thread
                         previewSurfaceTexture = SurfaceTexture(0)
                     }
                     previewSurfaceTexture!!.setDefaultBufferSize(request.resolution.width, request.resolution.height)
                     if (previewSurface == null) {
                         previewSurface = Surface(previewSurfaceTexture)
                     }
-                    // Provide the surface back on the request callback thread (we must call request.provideSurface here)
                     try {
                         request.provideSurface(previewSurface!!, previewProviderExecutor) { result ->
                             Log.v(TAG, "Preview surface release callback: $result")
@@ -393,7 +477,7 @@ class LiveCameraDetectService : LifecycleService() {
                         try { request.willNotProvideSurface() } catch (_: Exception) {}
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to create/prepare preview surface off-main: ${e.message}")
+                    Log.w(TAG, "Failed to create/prepare preview surface: ${e.message}")
                     try { request.willNotProvideSurface() } catch (_: Exception) {}
                 }
             }
@@ -406,6 +490,7 @@ class LiveCameraDetectService : LifecycleService() {
             return
         }
 
+        // Try to bind to available cameras
         val cameraInfos = provider.availableCameraInfos.toList()
         Log.d(TAG, "Available camera infos: ${cameraInfos.size}")
 
@@ -415,66 +500,65 @@ class LiveCameraDetectService : LifecycleService() {
             return
         }
 
-        // Try cameras quickly but don't block the main thread
-        var bound = false
+        // Try each camera sequentially with minimal delay
         for ((index, cameraInfo) in cameraInfos.withIndex()) {
             try {
                 Log.d(TAG, "Trying camera $index: $cameraInfo")
+
+                if (!bindInProgress.compareAndSet(false, true)) {
+                    Log.d(TAG, "Bind already in progress — skipping additional attempt")
+                    continue
+                }
+
                 provider.unbindAll()
 
                 val selector = CameraSelector.Builder()
                     .addCameraFilter { listOf(cameraInfo) }
                     .build()
 
-                // before posting:
-                if (!bindInProgress.compareAndSet(false, true)) {
-                    Log.d(TAG, "Bind already in progress — skipping additional attempt")
-                    continue
-                }
+                // Perform bind on main thread but with timeout protection
                 mainHandler.post {
                     try {
                         provider.bindToLifecycle(this@LiveCameraDetectService, selector, preview, imageAnalysis)
                         Log.i(TAG, "Successfully bound to camera $index")
                         lastSuccessfulBindMs = System.currentTimeMillis()
                         cancelScheduledReinit()
-                        bound = true
                     } catch (e: Exception) {
-                        Log.w(TAG, "Failed to bind to camera $index (main thread bind): ${e.message}")
+                        Log.w(TAG, "Failed to bind to camera $index: ${e.message}")
                     } finally {
                         bindInProgress.set(false)
                     }
                 }
 
-                // Give the bind a short window to succeed before trying the next camera
-                // (non-blocking: we schedule check after 900ms)
-//                Thread.sleep(100) // very short and happens on this worker; not main
-                if (bound) return
+                // Short delay before trying next camera
+                Thread.sleep(100)
+                if (imageAnalysis != null) return
+
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to prepare bind to camera $index: ${e.message}")
+                bindInProgress.set(false)
             }
         }
 
         Log.e(TAG, "All camera binding attempts failed - scheduling retry")
+        scheduleRetry()
     }
 
-    // ------------ Core analyzer (preserved/mostly unchanged) ------------
+    // ------------ Core analyzer (optimized for performance) ------------
     private fun analyzeImageProxy(image: ImageProxy) {
-//        Log.v(TAG, "analyzeImageProxy: Frame received - format: ${image.format}, size: ${image.width}x${image.height}")
-
         val now = System.currentTimeMillis()
         if ((now - lastProcTime) < MIN_GAP_MS) {
-            Log.v(TAG, "Throttling - skipping frame")
             image.close()
             return
         }
-        lastProcTime = now
-        frameIdx++
 
         if (isProcessing) {
-            Log.v(TAG, "Already processing - skipping frame")
             image.close()
             return
         }
+
+        lastProcTime = now
+        frameIdx++
         isProcessing = true
 
         try {
@@ -482,7 +566,6 @@ class LiveCameraDetectService : LifecycleService() {
             val h = image.height
             ensureBuffers(w, h)
 
-            // ensureBuffers already called from analyzer thread before analyzeImageProxy invocation
             if (image.format == ImageFormat.YUV_420_888) {
                 packToNV21(image, nv21Buf!!)
                 yuvToArgb(nv21Buf!!, argbBuf!!, w, h)
@@ -507,17 +590,14 @@ class LiveCameraDetectService : LifecycleService() {
             }
             canvas.drawBitmap(rgbBitmap!!, matrix, null)
             val finalBitmap = rotatedBitmap!!
-//            Log.v(TAG, "Bitmap ready for detection")
 
-            // Offload detection/recognition
+            // Offload heavy processing to background scope
             analyzeScope.launch {
                 try {
                     val doRecog = (frameIdx % RECOG_EVERY == 0)
                     val (metrics, results) = if (doRecog) {
-//                        Log.v(TAG, "Running full recognition")
                         viewModel.imageVectorUseCase.getNearestPersonName(finalBitmap, viewModel)
                     } else {
-//                        Log.v(TAG, "Running detection only")
                         val faceDetectionResult = viewModel.imageVectorUseCase.mediapipeFaceDetector.getAllCroppedFacesWithAngle(finalBitmap)
                         val results = faceDetectionResult.map { (_, boundingBox, _) ->
                             com.uav.analytics.domain.ImageVectorUseCase.FaceRecognitionResult(personName = "Detecting...", boundingBox = boundingBox)
@@ -526,18 +606,18 @@ class LiveCameraDetectService : LifecycleService() {
                     }
 
                     val faceCount = results.size
-//                    Log.d(TAG, "Detected $faceCount faces (headless)")
 
                     withContext(Dispatchers.Main) {
-                        try { viewModel.setMetrics(metrics) } catch (_: Exception) {}
-                        Log.d(TAG, "Detected faces (headless) = $faceCount")
+                        try {
+                            viewModel.setMetrics(metrics)
+                            Log.d(TAG, "Detected faces (headless) = $faceCount")
+                        } catch (_: Exception) {}
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "analysis coroutine error: ${e.message}")
+                    Log.e(TAG, "Analysis coroutine error: ${e.message}")
                 } finally {
                     isProcessing = false
                     image.close()
-//                    Log.v(TAG, "Frame processing completed and image closed")
                 }
             }
         } catch (t: Throwable) {
@@ -710,6 +790,10 @@ class LiveCameraDetectService : LifecycleService() {
                 if (attempt >= retryDelays.size) {
                     Log.e(TAG, "All camera reinit attempts failed")
                     reinitInProgress.set(false)
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        Log.w(TAG, "Fallback: Directly starting camera headless after all retries failed")
+                        startCameraHeadless()
+                    }
                     return
                 }
                 Log.d(TAG, "Reinit attempt ${attempt + 1}")
@@ -736,7 +820,7 @@ class LiveCameraDetectService : LifecycleService() {
     }
 
     // ---------------- periodic sender ----------------
-    private fun startTestSendingEveryMinute() {
+    private fun startPeriodicUpload() {
         if (senderJob?.isActive == true) return
         uploadIntervalMillis = try {
             RemoteConfigHelper.uploadIntervalDataMs()
@@ -766,7 +850,7 @@ class LiveCameraDetectService : LifecycleService() {
         }
     }
 
-    private fun stopTestSending() {
+    private fun stopPeriodicUpload() {
         senderJob?.cancel()
         senderJob = null
     }

@@ -33,8 +33,13 @@ class AggregatesSender(private val context: Context) {
             val json = gson.toJson(body)
             Log.d("AggregatesSender", "REQUEST BODY: $json")
 
+            // Log the base URL being used
+            Log.d("AggregatesSender", "Using base URL: ${getCurrentBaseUrl()}")
+            Log.d("AggregatesSender", "Full API endpoint: ${getCurrentBaseUrl()}store-analytics-data")
+
             val resp = NetworkModule.api.postAggregates(body)
-            Log.d("AggregatesSender", "POST /SubmitCameraReport -> ${resp.code()} ${resp.message()}")
+            Log.d("AggregatesSender", "POST /store-analytics-data -> ${resp.code()} ${resp.message()}")
+
             if (resp.isSuccessful) {
                 // ---------- Choose one of the cleanup strategies below ----------
 
@@ -60,6 +65,17 @@ class AggregatesSender(private val context: Context) {
         } catch (e: Exception) {
             Log.e("AggregatesSender", "Failed to send stored-person aggregates", e)
             false
+        }
+    }
+
+    private fun getCurrentBaseUrl(): String {
+        return try {
+            // Access the base URL through reflection or add a getter in NetworkModule
+            val field = NetworkModule::class.java.getDeclaredField("baseUrl")
+            field.isAccessible = true
+            field.get(null) as String
+        } catch (e: Exception) {
+            "Unknown"
         }
     }
 }

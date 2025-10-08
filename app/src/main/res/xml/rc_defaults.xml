@@ -10,7 +10,7 @@
     <entry key="upload_interval_sec_data" value="3600" />
 
     <!-- Delete record time (1 minute) -->
-    <entry key="delete_record_time" value="60" />
+    <entry key="delete_record_time" value="180" />
 
     <!-- Image processing knobs -->
     <entry key="jpeg_to_webp_quality" value="80" />
