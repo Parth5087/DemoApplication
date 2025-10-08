@@ -22,5 +22,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "DemoApplication"
+rootProject.name = "UntitledAd"
 include(":app")
