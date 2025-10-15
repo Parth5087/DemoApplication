@@ -232,6 +232,9 @@ class ImageVectorUseCase(
             // Print footer for completed period
             DataTableLogger.printTableFooter(totalPeopleSeenCumulative, runningTotalNewArrivals)
 
+            // 🧹 COMPLETELY RESET ALL TRACKING VARIABLES
+            Log.d("PDFTracking", "🧹 CLEARING ALL DATA FOR FRESH START...")
+
             // Reset all tracking variables
             totalPeopleSeenCumulative = 0
             tableHeaderPrinted = false
@@ -239,7 +242,13 @@ class ImageVectorUseCase(
             globalAllSeen.clear()
             previousIntervalPersons = emptySet()
             sessionStartTime = currentInterval
-
+            currentIntervalStart = alignToInterval(currentInterval)
+            intervalPersonSets.clear()
+            currentIntervalNewFaces.clear()
+            currentIntervalReenteredFaces.clear()
+            // Initialize new interval set
+            intervalPersonSets[currentIntervalStart] = mutableSetOf()
+            viewModel.resetAllFaceCounts()
             Log.d("PDFTracking", "🎊 NEW TRACKING PERIOD STARTED AT ${formatTime(sessionStartTime)}")
 
             // Print header for new period
@@ -269,10 +278,11 @@ class ImageVectorUseCase(
         if (newFaces.isNotEmpty()) {
             if (notes.isNotEmpty()) notes.append("\n")
             val sortedNewFaces = newFaces.sorted()
-            if (sortedNewFaces.size == 1) {
-                notes.append("Face ${sortedNewFaces.first()} (new arrival)")
+
+            if (sortedNewFaces.size <= 5) {
+                notes.append("Faces ${sortedNewFaces.joinToString(", ")} (new arrivals)")
             } else {
-                notes.append("Faces ${sortedNewFaces.first()}-${sortedNewFaces.last()} (new arrivals)")
+                notes.append("Faces ${sortedNewFaces.take(3).joinToString(", ")}... (${sortedNewFaces.size} new arrivals)")
             }
         }
 
