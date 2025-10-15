@@ -9,11 +9,11 @@ import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.Rect
 import android.util.Log
-import com.uav.analytics.IntervalCounts
 import com.uav.analytics.MainActivityViewModel
 import com.uav.analytics.data.FaceImageRecord
 import com.uav.analytics.data.ImagesVectorDB
 import com.uav.analytics.data.RecognitionMetrics
+import com.uav.analytics.domain.analytics.IntervalCounts
 import com.uav.analytics.domain.embeddings.FaceNet
 import com.uav.analytics.domain.faceDection.FaceSpoofDetector
 import com.uav.analytics.domain.faceDection.MediapipeFaceDetector
