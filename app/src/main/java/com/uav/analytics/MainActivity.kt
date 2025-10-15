@@ -67,6 +67,7 @@ class MainActivity : AppCompatActivity() {
             insets
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         // fetch RC and apply
         RemoteConfigHelper.fetchAndActivate {
