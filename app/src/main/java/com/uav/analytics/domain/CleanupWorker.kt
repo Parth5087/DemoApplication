@@ -17,7 +17,7 @@ class CleanupWorker(appContext: Context, workerParams: WorkerParameters) :
     override suspend fun doWork(): Result {
         return try {
             // Perform cleanup
-            ImagesVectorDB(applicationContext).removeExpiredRecords()
+//            ImagesVectorDB(applicationContext).removeExpiredRecords()
             Log.d("CleanupWorker", "Cleanup executed")
 
             // Schedule the next cleanup in 1 minute

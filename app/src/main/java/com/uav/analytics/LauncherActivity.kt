@@ -251,9 +251,10 @@ class LauncherActivity : AppCompatActivity() {
                 }
                 "live_camera_detect" -> {
                     // Stop any running CameraBackgroundService first
-                    stopService(Intent(this, CameraBackgroundService::class.java))
-                    val serviceIntent = Intent(this, LiveCameraDetectService::class.java)
-                    ContextCompat.startForegroundService(this, serviceIntent)
+//                    stopService(Intent(this, CameraBackgroundService::class.java))
+//                    val serviceIntent = Intent(this, LiveCameraDetectService::class.java)
+//                    ContextCompat.startForegroundService(this, serviceIntent)
+                    startActivity(Intent(this,MainActivity::class.java))
                     Log.d(TAG, "Started LiveCameraDetectService for live_camera_detect")
                 }
                 else -> {

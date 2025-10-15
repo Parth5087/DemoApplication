@@ -15,6 +15,7 @@ import android.hardware.camera2.CameraManager
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.*
+import android.provider.Settings
 import android.util.Log
 import android.util.Size
 import android.view.Surface
@@ -25,10 +26,12 @@ import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
+import com.uav.analytics.LauncherActivity
 import com.uav.analytics.MainActivityViewModel
 import com.uav.analytics.MainActivityViewModelFactory
 import com.uav.analytics.RemoteConfigHelper
 import com.uav.analytics.domain.analytics.AggregatesSender
+import com.uav.analytics.models.DeviceStatusRequest
 import kotlinx.coroutines.*
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
@@ -41,6 +44,10 @@ class LiveCameraDetectService : LifecycleService() {
         private const val NOTIF_CHANNEL = "live_camera_detect_channel"
         private const val NOTIF_ID = 102
         private const val REINIT_DEBOUNCE_MS = 2500L
+
+        // Add device status constants
+        private const val STATUS_ACTIVE = "active"
+        private const val STATUS_INACTIVE = "inactive"
     }
 
     // ---------- ViewModel & helpers ----------
@@ -178,10 +185,20 @@ class LiveCameraDetectService : LifecycleService() {
         }
     }
 
+    // ---------- Device Status Management ----------
+    private var deviceId: String = ""
+    private var cameraId: String = ""
+    private var isDeviceStatusActive = false
+
     @RequiresApi(Build.VERSION_CODES.O)
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "onCreate: Service created")
+
+        // Initialize device and camera IDs
+        val prefs = getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        deviceId = getAndroidId(this) ?: "Unavailable"
+        cameraId = prefs.getString("camera_id", "camera1") ?: "camera1"
 
         // Start as foreground service immediately to prevent ANR
         createNotificationChannel()
@@ -232,13 +249,21 @@ class LiveCameraDetectService : LifecycleService() {
                 lifecycleScope.launch(Dispatchers.Main) {
                     startCameraHeadless()
                 }
-            }, 1000)
+            }, 10000)
         }
 
-        // Start periodic upload
-        startPeriodicUpload()
-
         Log.d(TAG, "Service onCreate completed")
+    }
+
+    private fun getAndroidId(context: Context): String? {
+        return try {
+            val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+            Log.d(TAG, "Android ID: $androidId")
+            androidId
+        } catch (e: Exception) {
+            Log.e(TAG, "Error retrieving Android ID", e)
+            null
+        }
     }
 
     private suspend fun initializeViewModel() {
@@ -288,6 +313,10 @@ class LiveCameraDetectService : LifecycleService() {
 
     override fun onDestroy() {
         Log.d(TAG, "onDestroy: Service shutting down")
+
+        // Send inactive status when service is destroyed
+        updateDeviceStatusInactive()
+
         stopPeriodicUpload()
         cleanupCamera()
         analyzeScope.cancel()
@@ -319,6 +348,47 @@ class LiveCameraDetectService : LifecycleService() {
         Log.d(TAG, "onBind: Service bound")
         super.onBind(intent)
         return null
+    }
+
+    // ---------------- Device Status API ----------------
+    private suspend fun sendDeviceStatus(status: String) {
+        try {
+            withContext(Dispatchers.IO) {
+                val request = DeviceStatusRequest(
+                    cameraId = cameraId,
+                    deviceId = deviceId,
+                    status = status
+                )
+
+                val response = NetworkModule.api.deviceStatus(request)
+                if (response.isSuccessful) {
+                    Log.d(TAG, "Device status updated to: $status")
+                } else {
+                    val errorBody = response.errorBody()?.string()
+                    Log.e(TAG, "Failed to update device status:  ${response.code()} ${response.message()}.\nError Body: $errorBody")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending device status: ${e.message}")
+        }
+    }
+
+    private fun updateDeviceStatusActive() {
+        if (!isDeviceStatusActive) {
+            isDeviceStatusActive = true
+            lifecycleScope.launch {
+                sendDeviceStatus(STATUS_ACTIVE)
+            }
+        }
+    }
+
+    private fun updateDeviceStatusInactive() {
+        if (isDeviceStatusActive) {
+            isDeviceStatusActive = false
+            lifecycleScope.launch {
+                sendDeviceStatus(STATUS_INACTIVE)
+            }
+        }
     }
 
     // ---------------- Power State Receiver ----------------
@@ -496,6 +566,7 @@ class LiveCameraDetectService : LifecycleService() {
 
         if (cameraInfos.isEmpty()) {
             Log.e(TAG, "No camera infos available - scheduling retry")
+            updateDeviceStatusInactive()
             scheduleRetry()
             return
         }
@@ -561,6 +632,9 @@ class LiveCameraDetectService : LifecycleService() {
         frameIdx++
         isProcessing = true
 
+        // Update device status to ACTIVE when we start processing frames
+        updateDeviceStatusActive()
+
         try {
             val w = image.width
             val h = image.height
@@ -591,6 +665,11 @@ class LiveCameraDetectService : LifecycleService() {
             canvas.drawBitmap(rgbBitmap!!, matrix, null)
             val finalBitmap = rotatedBitmap!!
 
+            // Start periodic upload when we start detecting frames (only once)
+            if (senderJob?.isActive != true) {
+                startPeriodicUpload()
+            }
+
             // Offload heavy processing to background scope
             analyzeScope.launch {
                 try {
@@ -600,7 +679,7 @@ class LiveCameraDetectService : LifecycleService() {
                     } else {
                         val faceDetectionResult = viewModel.imageVectorUseCase.mediapipeFaceDetector.getAllCroppedFacesWithAngle(finalBitmap)
                         val results = faceDetectionResult.map { (_, boundingBox, _) ->
-                            com.uav.analytics.domain.ImageVectorUseCase.FaceRecognitionResult(personName = "Detecting...", boundingBox = boundingBox)
+                            com.uav.analytics.domain.ImageVectorUseCase.FaceRecognitionResult(personName = "Detecting...", personID = 0,boundingBox = boundingBox)
                         }
                         Pair(null, results)
                     }
@@ -821,6 +900,7 @@ class LiveCameraDetectService : LifecycleService() {
 
     // ---------------- periodic sender ----------------
     private fun startPeriodicUpload() {
+        // Only start if not already active and camera is running
         if (senderJob?.isActive == true) return
         uploadIntervalMillis = try {
             RemoteConfigHelper.uploadIntervalDataMs()
@@ -839,6 +919,7 @@ class LiveCameraDetectService : LifecycleService() {
                         cameras = listOf(cameraId),
                         fromMillis = from,
                         toMillis = now,
+                        deviceId = deviceId,
                         intervalTime = RemoteConfigHelper.getIntervalTime()
                     )
                     Log.d(TAG, if (ok) "Sent aggregates ✅" else "Send failed ❌")
@@ -848,6 +929,7 @@ class LiveCameraDetectService : LifecycleService() {
                 delay(uploadIntervalMillis)
             }
         }
+        Log.d(TAG, "Periodic upload started")
     }
 
     private fun stopPeriodicUpload() {
@@ -860,6 +942,10 @@ class LiveCameraDetectService : LifecycleService() {
         try {
             imageAnalysis?.clearAnalyzer()
             cameraProvider?.unbindAll()
+
+            // Send inactive status when camera is cleaned up
+            updateDeviceStatusInactive()
+
             Log.d(TAG, "Camera resources cleaned up")
         } catch (e: Exception) {
             Log.w(TAG, "cleanupCamera exception: ${e.message}")

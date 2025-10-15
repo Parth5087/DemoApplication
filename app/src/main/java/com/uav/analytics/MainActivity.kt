@@ -159,6 +159,7 @@ class MainActivity : AppCompatActivity() {
                     cameras = listOf(cameraId),
                     fromMillis = from,
                     toMillis = now,
+                    deviceId = "",
                     intervalTime = RemoteConfigHelper.getIntervalTime()
                 )
                 Log.d("AGG-SEND", if (ok) "Sent ✅ every ${uploadIntervalMillis/1000}s" else "Send failed ❌")
@@ -197,6 +198,6 @@ class MainActivity : AppCompatActivity() {
             previewOnly = previewOnly              // <<–– flip true to test webcam only
         )
         cameraPreview.addView(faceDetectionOverlay)
-        startTestSendingEveryMinute()
+//        startTestSendingEveryMinute()
     }
 }

@@ -1,6 +1,7 @@
 package com.uav.analytics.services
 
 import com.uav.analytics.domain.analytics.HourlyPayload
+import com.uav.analytics.models.DeviceStatusRequest
 import com.uav.analytics.models.RegisterDeviceRequest
 import com.uav.analytics.models.RegisterDeviceResponse
 import okhttp3.MultipartBody
@@ -30,5 +31,10 @@ interface CrowdApi {
     @POST("store-device-data")
     suspend fun registerDevice(
         @Body request: RegisterDeviceRequest
+    ): Response<RegisterDeviceResponse>
+
+    @POST("store-device-status")
+    suspend fun deviceStatus(
+        @Body request: DeviceStatusRequest
     ): Response<RegisterDeviceResponse>
 }

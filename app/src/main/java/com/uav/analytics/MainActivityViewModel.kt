@@ -10,6 +10,8 @@ import com.uav.analytics.data.PersonDB
 import com.uav.analytics.data.RecognitionMetrics
 import com.uav.analytics.domain.ImageVectorUseCase
 import com.uav.analytics.domain.PersonUseCase
+import com.uav.analytics.domain.analytics.FaceCounts
+import com.uav.analytics.domain.analytics.IntervalCounts
 import com.uav.analytics.domain.embeddings.FaceNet
 import com.uav.analytics.domain.faceDection.FaceSpoofDetector
 import com.uav.analytics.domain.faceDection.MediapipeFaceDetector
@@ -24,6 +26,9 @@ class MainActivityViewModel(
 
     private val _faceCountsState = MutableLiveData<FaceCounts>()
     val faceCountsState: LiveData<FaceCounts> = _faceCountsState
+
+    private val _intervalCountsState = MutableLiveData<IntervalCounts>()
+    val intervalCountsState: LiveData<IntervalCounts> = _intervalCountsState
 
     private val _expressionCountsState = MutableLiveData<ImageVectorUseCase.ExpressionCounts>()
     val expressionCountsState: LiveData<ImageVectorUseCase.ExpressionCounts> = _expressionCountsState
@@ -55,6 +60,10 @@ class MainActivityViewModel(
         _faceCountsState.postValue(FaceCounts(detectedCount, storedCount))
     }
 
+    fun updateIntervalCounts(counts: IntervalCounts) {
+        _intervalCountsState.postValue(counts)
+    }
+
     fun updateExpressionCounts(expressionCounts: ImageVectorUseCase.ExpressionCounts) {
         _expressionCountsState.postValue(expressionCounts)
     }
@@ -83,7 +92,9 @@ class MainActivityViewModel(
         detectedFaceNames.clear()
         personUseCase.clearAllPeople()
         imageVectorUseCase.clearAllPeople()
+        imageVectorUseCase.stopTracking()
         _faceCountsState.postValue(FaceCounts(0, 0))
+        _intervalCountsState.postValue(IntervalCounts("",0,0,0,0,0))
         _expressionCountsState.postValue(ImageVectorUseCase.ExpressionCounts())
         _genderCountsState.postValue(ImageVectorUseCase.GenderCounts())
         _ageGroupCountsState.postValue(ImageVectorUseCase.AgeGroupCounts())
@@ -92,8 +103,11 @@ class MainActivityViewModel(
         _storedExpressionCountsState.postValue(ImageVectorUseCase.ExpressionCounts())
         _faceDetectionMetricsState.postValue(null)
     }
+
+    fun startIntervalTracking() {
+        imageVectorUseCase.startTracking()
+    }
 }
-data class FaceCounts(val detectedCount: Int, val storedCount: Long)
 
 class MainActivityViewModelFactory(
     private val context: Context

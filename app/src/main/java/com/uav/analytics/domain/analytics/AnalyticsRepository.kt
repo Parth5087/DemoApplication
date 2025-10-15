@@ -39,6 +39,7 @@ class AnalyticsRepository(private val context: Context) {
         cameras: List<String>,
         fromMillis: Long,
         toMillis: Long,
+        deviceId: String,
         intervalTime: Long = 180L, // Changed to 3 minutes (180 seconds) default
     ): HourlyPayload {
 
@@ -212,6 +213,7 @@ class AnalyticsRepository(private val context: Context) {
         return HourlyPayload(
             startedAt = startedAt,
             endAt = endAt,
+            deviceId = deviceId,
             cameras = camerasMap.toMap()
         )
     }

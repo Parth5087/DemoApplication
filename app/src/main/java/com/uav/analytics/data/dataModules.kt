@@ -32,21 +32,19 @@ data class FaceImageRecord(
     var gender: String? = null,
     var ageGroup: String? = null,
     var expression: String? = null,
-    var createdAt: Long = System.currentTimeMillis(), // NEW field
-    var isOldPerson: Boolean = false // NEW field
-)
+    var createdAt: Long = System.currentTimeMillis(),
+    var isOldPerson: Boolean = false
+) {
+    override fun toString(): String {
+        return "FaceImageRecord(id=$id, personID=$personID, personName='$personName',  gender=$gender, ageGroup=$ageGroup, expression=$expression, createdAt=$createdAt, isOldPerson=$isOldPerson)"
+    }
+}
 
 @Entity
 data class PersonRecord(
-    // primary-key
     @Id var personID: Long = 0,
     var personName: String = "",
-
-    // number of images selected by the user
-    // under the name of the person
     var numImages: Long = 0,
-
-    // time when the record was added
     var addTime: Long = 0
 )
 

@@ -20,6 +20,7 @@ class AggregatesSender(private val context: Context) {
         cameras: List<String>,
         fromMillis: Long,
         toMillis: Long,
+        deviceId: String,
         intervalTime: Long,
     ): Boolean {
         return try {
@@ -27,13 +28,12 @@ class AggregatesSender(private val context: Context) {
                 cameras = cameras,
                 fromMillis = fromMillis,
                 toMillis = toMillis,
+                deviceId = deviceId,
                 intervalTime = intervalTime,
             )
 
             val json = gson.toJson(body)
             Log.d("AggregatesSender", "REQUEST BODY: $json")
-
-            // Log the base URL being used
             Log.d("AggregatesSender", "Using base URL: ${getCurrentBaseUrl()}")
             Log.d("AggregatesSender", "Full API endpoint: ${getCurrentBaseUrl()}store-analytics-data")
 
@@ -59,7 +59,12 @@ class AggregatesSender(private val context: Context) {
 
                 true
             } else {
-                Log.w("AggregatesSender", "Server returned unsuccessful response, not clearing DB")
+                // Read error body for debugging (if available)
+                val errorBody = resp.errorBody()?.string()
+                Log.e(
+                    "AggregatesSender",
+                    "Failed to send aggregates. Server responded with ${resp.code()} ${resp.message()}.\nError Body: $errorBody"
+                )
                 false
             }
         } catch (e: Exception) {

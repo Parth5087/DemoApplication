@@ -548,7 +548,7 @@ class FaceDetectionOverlay(
                     } else {
                         val faceDetectionResult = viewModel.imageVectorUseCase.mediapipeFaceDetector.getAllCroppedFacesWithAngle(finalBitmap)
                         val results = faceDetectionResult.map { (croppedBitmap, boundingBox, _) ->
-                            ImageVectorUseCase.FaceRecognitionResult(personName = "Detecting...", boundingBox = boundingBox)
+                            ImageVectorUseCase.FaceRecognitionResult(personName = "Detecting...", personID = 0, boundingBox = boundingBox)
                         }
                         Pair(null, results)
                     }
