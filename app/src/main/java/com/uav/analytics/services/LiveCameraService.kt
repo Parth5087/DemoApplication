@@ -907,7 +907,7 @@ class LiveCameraDetectService : LifecycleService() {
         } catch (_: Exception) { uploadIntervalMillis }
         senderJob = lifecycleScope.launch(Dispatchers.IO) {
             delay(uploadIntervalMillis)
-            while (isActive) {
+            /*while (isActive) {
                 try {
                     val prefs = getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
                     val cameraId = prefs.getString("camera_id", "camera1") ?: "camera1"
@@ -927,7 +927,7 @@ class LiveCameraDetectService : LifecycleService() {
                     Log.e(TAG, "Error sending aggregates: ${e.message}")
                 }
                 delay(uploadIntervalMillis)
-            }
+            }*/
         }
         Log.d(TAG, "Periodic upload started")
     }

@@ -1,5 +1,6 @@
 package com.uav.analytics.domain
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -8,11 +9,14 @@ import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.Rect
+import android.provider.Settings
 import android.util.Log
 import com.uav.analytics.MainActivityViewModel
+import com.uav.analytics.RemoteConfigHelper
 import com.uav.analytics.data.FaceImageRecord
 import com.uav.analytics.data.ImagesVectorDB
 import com.uav.analytics.data.RecognitionMetrics
+import com.uav.analytics.domain.analytics.AggregatesSender
 import com.uav.analytics.domain.analytics.IntervalCounts
 import com.uav.analytics.domain.embeddings.FaceNet
 import com.uav.analytics.domain.faceDection.FaceSpoofDetector
@@ -29,7 +33,6 @@ import org.tensorflow.lite.support.image.ops.ResizeOp
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.pow
@@ -44,6 +47,9 @@ class ImageVectorUseCase(
     val faceNet: FaceNet,
     private val context: Context
 ) {
+
+    // Add AggregatesSender instance
+    private val aggregatesSender = AggregatesSender(context)
 
     val ids = arrayListOf<Long>()
 
@@ -86,9 +92,12 @@ class ImageVectorUseCase(
     private var previousIntervalPersons: Set<Long> = emptySet()
     private var runningTotalNewArrivals: Int = 0
     private val globalAllSeen: MutableSet<Long> = mutableSetOf()
-    private val intervalMillis = 1 * 60 * 1000L  // 1 minute interval for testing
-    private val trackingPeriodMillis = 10 * 60 * 1000L  // 10 minutes total tracking for testing
+    private val intervalMillis = RemoteConfigHelper.getIntervalTime() * 1000L  // Get from remote config
+    private val trackingPeriodMillis = RemoteConfigHelper.uploadIntervalDataMs()  // Get from remote config
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+    private val batchIdFormatter = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault())
+    private val fullTimeFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+    private val fullTimeParser = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
 
     // Tracking variables for PDF logic
     private var totalPeopleSeenCumulative: Int = 0
@@ -96,9 +105,13 @@ class ImageVectorUseCase(
     private var currentIntervalNewFaces: MutableSet<Long> = mutableSetOf()
     private var currentIntervalReenteredFaces: MutableSet<Long> = mutableSetOf()
 
+    // For API batching: Collect 1-min intervals for 5-min period
+    private val currentPeriodIntervals: MutableList<IntervalCounts> = mutableListOf()
+    private val pendingIntervals: MutableList<IntervalCounts> = mutableListOf()
+
     fun startTracking(startTime: Long = System.currentTimeMillis()) {
         sessionStartTime = startTime
-        currentIntervalStart = alignToInterval(startTime)
+        currentIntervalStart = sessionStartTime
         intervalPersonSets.clear()
         previousIntervalPersons = emptySet()
         runningTotalNewArrivals = 0
@@ -107,6 +120,7 @@ class ImageVectorUseCase(
         globalAllSeen.clear()
         currentIntervalNewFaces.clear()
         currentIntervalReenteredFaces.clear()
+        currentPeriodIntervals.clear() // Clear previous period data
         intervalPersonSets[currentIntervalStart] = mutableSetOf()
 
         // Print initial table header
@@ -120,19 +134,20 @@ class ImageVectorUseCase(
         sessionStartTime = 0L
         runningTotalNewArrivals = 0
         totalPeopleSeenCumulative = 0
+        currentPeriodIntervals.clear()
+        pendingIntervals.clear()
     }
 
-    private fun alignToInterval(time: Long): Long {
-        val cal = Calendar.getInstance().apply { timeInMillis = time }
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        return cal.timeInMillis
+    private fun getIntervalStart(time: Long): Long {
+        val elapsed = time - sessionStartTime
+        val intervalOffset = (elapsed / intervalMillis) * intervalMillis
+        return sessionStartTime + intervalOffset
     }
 
     private fun formatTime(time: Long): String = timeFormat.format(Date(time))
 
-    private fun processIntervalUpdate(viewModel: MainActivityViewModel, currentTime: Long, currentFramePersons: Set<Long>) {
-        val currentInterval = alignToInterval(currentTime)
+    private suspend fun processIntervalUpdate(viewModel: MainActivityViewModel, currentTime: Long, currentFramePersons: Set<Long>) {
+        val currentInterval = getIntervalStart(currentTime)
 
         Log.d("PDFTracking", "⏰ Processing: CurrentTime=${formatTime(currentTime)}, CurrentInterval=${formatTime(currentInterval)}, CurrentIntervalStart=${formatTime(currentIntervalStart)}")
         Log.d("PDFTracking", "👥 Current Frame Persons: ${currentFramePersons.size} - IDs: $currentFramePersons")
@@ -187,8 +202,33 @@ class ImageVectorUseCase(
 
         val periodStr = "${formatTime(currentIntervalStart)} - ${formatTime(currentIntervalStart + intervalMillis)}"
 
+        // Compute per-interval attribute counts
+        val genderCounts = computeIntervalGenderCounts(completedIntervalPersons)
+        val ageGroupCounts = computeIntervalAgeGroupCounts(completedIntervalPersons)
+        val expressionCounts = computeIntervalExpressionCounts(completedIntervalPersons)
+
         // Generate notes like PDF
         val notes = buildNotes(newFaces = currentIntervalNewFaces, reenteredFaces = currentIntervalReenteredFaces, oldFaces = oldFaces)
+
+        val batchId = batchIdFormatter.format(Date(currentIntervalStart))
+        val batchStart = fullTimeFormatter.format(Date(currentIntervalStart))
+        val batchEnd = fullTimeFormatter.format(Date(currentIntervalStart + intervalMillis))
+
+        val intervalCounts = IntervalCounts(
+            timePeriod = periodStr,
+            oldPeople = oldPeople,
+            newPeople = newPeople,
+            totalPeopleSeen = totalPeopleSeen,
+            uniqueNewArrivals = uniqueNewArrivals,
+            runningTotalNewArrivals = runningTotalNewArrivals,
+            genderCounts = genderCounts,
+            ageGroupCounts = ageGroupCounts,
+            expressionCounts = expressionCounts,
+            notes = notes,
+            batchId = batchId,
+            batchStartTime = batchStart,
+            batchEndTime = batchEnd
+        )
 
         // PRINT TABLE ROW
         DataTableLogger.printTableRow(
@@ -205,17 +245,8 @@ class ImageVectorUseCase(
         logDetailedBreakdown(periodStr, oldPeople, newPeople, totalPeopleSeen, uniqueNewArrivals,
             runningTotalNewArrivals, completedIntervalPersons, previousIntervalPersons)
 
-        // Update ViewModel
-        viewModel.updateIntervalCounts(
-            IntervalCounts(
-                timePeriod = periodStr,
-                oldPeople = oldPeople,
-                newPeople = newPeople,
-                totalPeopleSeen = totalPeopleSeen,
-                uniqueNewArrivals = uniqueNewArrivals,
-                runningTotalNewArrivals = runningTotalNewArrivals
-            )
-        )
+        // Collect for API batch
+        currentPeriodIntervals.add(intervalCounts)
 
         // Update for next interval
         previousIntervalPersons = completedIntervalPersons
@@ -226,35 +257,115 @@ class ImageVectorUseCase(
 
         // Check for new tracking period (5 minutes completed)
         val periodEndTime = sessionStartTime + trackingPeriodMillis
-        if (currentInterval >= periodEndTime) {
+        if (currentIntervalStart >= periodEndTime) {
             Log.d("PDFTracking", "🕐 TRACKING PERIOD COMPLETED: ${formatTime(sessionStartTime)} to ${formatTime(periodEndTime)}")
 
+            // Send API data for the completed period
+            val periodStartTime = sessionStartTime
+            val periodEndTimeLocal = currentIntervalStart
             // Print footer for completed period
             DataTableLogger.printTableFooter(totalPeopleSeenCumulative, runningTotalNewArrivals)
 
+            sendPeriodData(viewModel, periodStartTime, periodEndTimeLocal, currentPeriodIntervals.toList())
             // 🧹 COMPLETELY RESET ALL TRACKING VARIABLES
             Log.d("PDFTracking", "🧹 CLEARING ALL DATA FOR FRESH START...")
+            Log.d("PDFTracking", "🎊 NEW TRACKING PERIOD STARTED AT ${formatTime(sessionStartTime)}")
 
+            tableHeaderPrinted = true
+        }
+    }
+
+    @SuppressLint("HardwareIds")
+    private suspend fun sendPeriodData(viewModel: MainActivityViewModel, periodStartTime: Long, periodEndTime: Long, intervals: List<IntervalCounts>) {
+        if (pendingIntervals.isEmpty() && intervals.isEmpty()) return
+
+        val allIntervals = pendingIntervals + intervals
+        val deviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+        val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        val cameraId = prefs.getString("camera_id", "camera1") ?: "camera1"
+
+        val success = aggregatesSender.sendBatchData(allIntervals, deviceId, cameraID = cameraId)
+
+        if (success) {
+            pendingIntervals.clear()
+            currentPeriodIntervals.clear()
+            viewModel.resetAllFaceCounts()
             // Reset all tracking variables
             totalPeopleSeenCumulative = 0
             tableHeaderPrinted = false
             runningTotalNewArrivals = 0
             globalAllSeen.clear()
             previousIntervalPersons = emptySet()
-            sessionStartTime = currentInterval
-            currentIntervalStart = alignToInterval(currentInterval)
+            sessionStartTime = currentIntervalStart
+            currentIntervalStart = sessionStartTime
             intervalPersonSets.clear()
             currentIntervalNewFaces.clear()
             currentIntervalReenteredFaces.clear()
             // Initialize new interval set
             intervalPersonSets[currentIntervalStart] = mutableSetOf()
-            viewModel.resetAllFaceCounts()
-            Log.d("PDFTracking", "🎊 NEW TRACKING PERIOD STARTED AT ${formatTime(sessionStartTime)}")
-
-            // Print header for new period
-            DataTableLogger.printTableHeader()
-            tableHeaderPrinted = true
+            Log.d("PDFTracking", "✅ Successfully sent ${allIntervals.size} intervals to API")
+        } else {
+            pendingIntervals.addAll(intervals)
+            Log.e("PDFTracking", "❌ Failed to send intervals, added to pending")
         }
+    }
+
+    private fun computeIntervalGenderCounts(persons: Set<Long>): GenderCounts {
+        var male = 0
+        var female = 0
+        persons.forEach { personId ->
+            val record = imagesVectorDB.getLatestFaceImageRecord(personId)
+            when (record?.gender) {
+                "Male" -> male++
+                "Female" -> female++
+            }
+        }
+        return GenderCounts(maleCount = male, femaleCount = female)
+    }
+
+    private fun computeIntervalAgeGroupCounts(persons: Set<Long>): AgeGroupCounts {
+        var child = 0
+        var young = 0
+        var adult = 0
+        var elderly = 0
+        persons.forEach { personId ->
+            val record = imagesVectorDB.getLatestFaceImageRecord(personId)
+            when (record?.ageGroup) {
+                "Child (0-14)" -> child++
+                "Young (15-25)" -> young++
+                "Adult (26-55)" -> adult++
+                "Elderly (56+)" -> elderly++
+            }
+        }
+        return AgeGroupCounts(childCount = child, youngAdultCount = young, adultCount = adult, elderlyCount = elderly)
+    }
+
+    private fun computeIntervalExpressionCounts(persons: Set<Long>): ExpressionCounts {
+        var neutral = 0
+        var happy = 0
+        var surprised = 0
+        var sad = 0
+        var anger = 0
+        var fear = 0
+        persons.forEach { personId ->
+            val record = imagesVectorDB.getLatestFaceImageRecord(personId)
+            when (record?.expression) {
+                "neutral" -> neutral++
+                "happy" -> happy++
+                "surprised" -> surprised++
+                "sad" -> sad++
+                "anger" -> anger++
+                "fear" -> fear++
+            }
+        }
+        return ExpressionCounts(
+            neutralCount = neutral,
+            happyCount = happy,
+            surprisedCount = surprised,
+            sadCount = sad,
+            angerCount = anger,
+            fearCount = fear
+        )
     }
 
     private fun buildNotes(

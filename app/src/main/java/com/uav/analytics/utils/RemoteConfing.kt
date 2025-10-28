@@ -19,6 +19,7 @@ object RemoteConfigHelper {
     private const val START_DESTINATION    = "start_destination"
     private const val DELETE_RECORD_TIME     = "delete_record_time"
     private const val INTERVAL_TIME     = "interval_time"
+    private const val APP_VERSION       = "latest_app_version"
 
     private val rc get() = Firebase.remoteConfig
     private var initialized = false
@@ -44,7 +45,8 @@ object RemoteConfigHelper {
             AUTO_UPLOAD_ENABLED  to true,
             START_DESTINATION    to "live_camera_detect",
             DELETE_RECORD_TIME   to 180L,
-            INTERVAL_TIME        to 180L
+            INTERVAL_TIME        to 180L,
+            APP_VERSION          to BuildConfig.VERSION_NAME
         )
         rc.setDefaultsAsync(defaults)
     }
@@ -90,6 +92,7 @@ object RemoteConfigHelper {
     fun getIntervalTime(): Long = rc.getLong(INTERVAL_TIME)
     fun autoUploadEnabled(): Boolean = rc.getBoolean(AUTO_UPLOAD_ENABLED)
     fun startDestination(): String = rc.getString(START_DESTINATION)
+    fun getAppVersion(): String = rc.getString(APP_VERSION)
 
     // ---------- Debug logger ----------
     private fun srcName(key: String): String {
@@ -111,5 +114,6 @@ object RemoteConfigHelper {
         Log.d("RC-SRC", "[$prefix] $INTERVAL_TIME=${rc.getLong(INTERVAL_TIME)} src=${srcName(INTERVAL_TIME)}")
         Log.d("RC-SRC", "[$prefix] $AUTO_UPLOAD_ENABLED=${rc.getBoolean(AUTO_UPLOAD_ENABLED)} src=${srcName(AUTO_UPLOAD_ENABLED)}")
         Log.d("RC-SRC", "[$prefix] $START_DESTINATION=\"${rc.getString(START_DESTINATION)}\" src=${srcName(START_DESTINATION)}")
+        Log.d("RC-SRC", "[$prefix] $APP_VERSION=\"${rc.getString(APP_VERSION)}\" src=${srcName(APP_VERSION)}")
     }
 }

@@ -5,6 +5,7 @@ import android.util.Log
 import com.uav.analytics.RemoteConfigHelper
 import io.objectbox.kotlin.boxFor
 import io.objectbox.kotlin.query
+import io.objectbox.query.QueryBuilder
 import javax.inject.Singleton
 
 @Singleton
@@ -118,5 +119,12 @@ class ImagesVectorDB(context: Context) {
             .build()
             .findFirst()
         return record?.isOldPerson ?: false
+    }
+
+    fun getLatestFaceImageRecord(personId: Long): FaceImageRecord? {
+        return imagesBox.query(FaceImageRecord_.personID.equal(personId))
+            .order(FaceImageRecord_.createdAt, QueryBuilder.DESCENDING)
+            .build()
+            .findFirst()
     }
 }

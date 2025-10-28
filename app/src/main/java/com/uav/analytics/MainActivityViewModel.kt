@@ -94,7 +94,6 @@ class MainActivityViewModel(
         imageVectorUseCase.clearAllPeople()
         imageVectorUseCase.stopTracking()
         _faceCountsState.postValue(FaceCounts(0, 0))
-        _intervalCountsState.postValue(IntervalCounts("",0,0,0,0,0))
         _expressionCountsState.postValue(ImageVectorUseCase.ExpressionCounts())
         _genderCountsState.postValue(ImageVectorUseCase.GenderCounts())
         _ageGroupCountsState.postValue(ImageVectorUseCase.AgeGroupCounts())

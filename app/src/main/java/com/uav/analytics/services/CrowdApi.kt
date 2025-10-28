@@ -1,5 +1,7 @@
 package com.uav.analytics.services
 
+import com.uav.analytics.domain.ImageVectorUseCase
+import com.uav.analytics.domain.analytics.BatchData
 import com.uav.analytics.domain.analytics.HourlyPayload
 import com.uav.analytics.models.DeviceStatusRequest
 import com.uav.analytics.models.RegisterDeviceRequest
@@ -19,6 +21,10 @@ interface CrowdApi {
     suspend fun postAggregates(
         @Body body: HourlyPayload
     ): Response<Unit>
+
+    // Add batch data endpoint
+    @POST("store-analytics-data")
+    suspend fun postAggregatesData(@Body batchData: BatchData): Response<Void>
 
     // NEW: /v1/ingest?camera_id=cam1  (multipart: file + camera_id)
     @Multipart

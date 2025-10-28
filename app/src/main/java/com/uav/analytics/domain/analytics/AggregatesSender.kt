@@ -73,6 +73,34 @@ class AggregatesSender(private val context: Context) {
         }
     }
 
+    /**
+     * Send batch data from ImageVectorUseCase
+     */
+    suspend fun sendBatchData(intervals: List<IntervalCounts>, deviceId: String, cameraID: String, isRetry: Boolean = false): Boolean {
+        return try {
+            // Use repository to build the payload
+            val batchData = repo.buildBatchDataPayload(intervals, deviceId, cameraID)
+
+            val json = gson.toJson(batchData)
+            Log.d("AggregatesSender", "BATCH DATA REQUEST: $json")
+
+            val resp = NetworkModule.api.postAggregatesData(batchData)
+            Log.d("AggregatesSender", "POST /store-analytics-data -> ${resp.code()} ${resp.message()}")
+
+            if (resp.isSuccessful) {
+                Log.d("AggregatesSender", "✅ ${if (isRetry) "Retry " else ""}Batch data sent successfully for ${intervals.size} intervals")
+                true
+            } else {
+                val errorBody = resp.errorBody()?.string()
+                Log.e("AggregatesSender", "❌ ${if (isRetry) "Retry " else ""}Failed to send batch data: ${resp.code()} - $errorBody")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e("AggregatesSender", "Failed to send batch data", e)
+            false
+        }
+    }
+
     private fun getCurrentBaseUrl(): String {
         return try {
             // Access the base URL through reflection or add a getter in NetworkModule

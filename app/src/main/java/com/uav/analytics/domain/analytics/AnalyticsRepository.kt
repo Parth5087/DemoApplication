@@ -6,6 +6,7 @@ import com.uav.analytics.data.PersonRecord
 import com.uav.analytics.data.FaceImageRecord_
 import com.uav.analytics.data.PersonRecord_
 import com.uav.analytics.data.ObjectBoxStore
+import com.uav.analytics.domain.ImageVectorUseCase
 import io.objectbox.kotlin.boxFor
 import io.objectbox.kotlin.query
 import java.text.SimpleDateFormat
@@ -32,6 +33,14 @@ class AnalyticsRepository(private val context: Context) {
         timeZone = TimeZone.getTimeZone("Asia/Kolkata")
     }
     private val keyFmt = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("Asia/Kolkata")
+    }
+
+    private val fullTimeFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("Asia/Kolkata")
+    }
+
+    private val fullTimeParser = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).apply {
         timeZone = TimeZone.getTimeZone("Asia/Kolkata")
     }
 
@@ -216,6 +225,132 @@ class AnalyticsRepository(private val context: Context) {
             deviceId = deviceId,
             cameras = camerasMap.toMap()
         )
+    }
+
+    fun buildBatchDataPayload(
+        intervals: List<IntervalCounts>,
+        deviceId: String,
+        cameraName: String = ""
+    ): BatchData {
+        val allIntervals = intervals
+        var startedAt: String
+        var endAt: String
+
+        try {
+            val minStartTime = allIntervals.minOf { fullTimeParser.parse(it.batchStartTime).time }
+            val maxEndTime = allIntervals.maxOf { fullTimeParser.parse(it.batchEndTime).time }
+            startedAt = fullTimeFormatter.format(Date(minStartTime))
+            endAt = fullTimeFormatter.format(Date(maxEndTime))
+        } catch (e: Exception) {
+            // Fallback to current time if parsing fails
+            val currentTime = System.currentTimeMillis()
+            startedAt = fullTimeFormatter.format(Date(currentTime - 5 * 60 * 1000)) // 5 minutes ago
+            endAt = fullTimeFormatter.format(Date(currentTime))
+        }
+
+        val batches = allIntervals.associate { interval ->
+            val key = "batch_${interval.batchId}_${interval.batchStartTime}"
+            key to BatchDetail(
+                oldPeople = interval.oldPeople,
+                newPeople = interval.newPeople,
+                totalPeopleSeen = interval.totalPeopleSeen,
+                uniqueNewArrivals = interval.uniqueNewArrivals,
+                runningTotalPeople = interval.runningTotalNewArrivals,
+                notes = interval.notes,
+                genderCounts = mapOf(
+                    "Male" to interval.genderCounts.maleCount,
+                    "Female" to interval.genderCounts.femaleCount,
+                    "Unknown" to 0
+                ),
+                emotionCounts = toEmotionMap(interval.expressionCounts),
+                ageCategoryCounts = mapOf(
+                    "Child (0-14)" to interval.ageGroupCounts.childCount,
+                    "Young (15-25)" to interval.ageGroupCounts.youngAdultCount,
+                    "Adult (26-55)" to interval.ageGroupCounts.adultCount,
+                    "Elderly (56+)" to interval.ageGroupCounts.elderlyCount
+                ),
+                batchStartTime = interval.batchStartTime,
+                batchEndTime = interval.batchEndTime
+            )
+        }
+
+        val batchesProcessed = allIntervals.size
+        val totalPeopleSeenTotal = allIntervals.sumOf { it.totalPeopleSeen }
+        val runningTotalPeople = allIntervals.lastOrNull()?.runningTotalNewArrivals ?: 0
+
+        val totalGenderCounts = aggregateGenderCounts(allIntervals.map { it.genderCounts })
+        val totalAgeCounts = aggregateAgeGroupCounts(allIntervals.map { it.ageGroupCounts })
+        val totalEmotionCounts = aggregateEmotionCounts(allIntervals.map { toEmotionMap(it.expressionCounts) })
+
+        val cameraData = CameraData(
+            batchesProcessed = batchesProcessed,
+            runningTotalPeople = runningTotalPeople,
+            totalPeopleSeenTotal = totalPeopleSeenTotal,
+            genderCountsTotal = totalGenderCounts,
+            ageCategoryCounts = totalAgeCounts,
+            emotionCountsTotal = totalEmotionCounts,
+            batches = batches
+        )
+
+        return BatchData(
+            cameras = mapOf(cameraName to cameraData),
+            deviceId = deviceId,
+            endAt = endAt,
+            startedAt = startedAt
+        )
+    }
+
+    /**
+     * NEW: Helper methods for aggregation
+     */
+    private fun toEmotionMap(ec: ImageVectorUseCase.ExpressionCounts): Map<String, Int> = mapOf(
+        "neutral" to ec.neutralCount,
+        "happy" to ec.happyCount,
+        "surprised" to ec.surprisedCount,
+        "sad" to ec.sadCount,
+        "angry" to ec.angerCount,
+        "disgust" to 0,
+        "fear" to ec.fearCount,
+        "contempt" to 0
+    )
+
+    private fun aggregateGenderCounts(genders: List<ImageVectorUseCase.GenderCounts>): Map<String, Int> {
+        var male = 0
+        var female = 0
+        genders.forEach {
+            male += it.maleCount
+            female += it.femaleCount
+        }
+        return mapOf("Male" to male, "Female" to female, "Unknown" to 0)
+    }
+
+    private fun aggregateAgeGroupCounts(ages: List<ImageVectorUseCase.AgeGroupCounts>): Map<String, Int> {
+        var child = 0
+        var young = 0
+        var adult = 0
+        var elderly = 0
+        ages.forEach {
+            child += it.childCount
+            young += it.youngAdultCount
+            adult += it.adultCount
+            elderly += it.elderlyCount
+        }
+        return mapOf(
+            "Child (0-14)" to child,
+            "Young (15-25)" to young,
+            "Adult (26-55)" to adult,
+            "Elderly (56+)" to elderly
+        )
+    }
+
+    private fun aggregateEmotionCounts(emotions: List<Map<String, Int>>): Map<String, Int> {
+        val total = mutableMapOf<String, Int>()
+        emotions.forEach { map ->
+            map.forEach { (key, value) ->
+                total[key] = (total[key] ?: 0) + value
+            }
+        }
+        return total
     }
 
     /** Remove face image records whose createdAt is within [fromMillis, toMillis]. */
