@@ -39,6 +39,8 @@ import kotlin.math.pow
 import kotlin.math.sqrt
 import kotlin.time.DurationUnit
 import kotlin.time.measureTimedValue
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 
 class ImageVectorUseCase(
     val mediapipeFaceDetector: MediapipeFaceDetector,
@@ -50,6 +52,7 @@ class ImageVectorUseCase(
 
     // Add AggregatesSender instance
     private val aggregatesSender = AggregatesSender(context)
+    private val prefs = context.getSharedPreferences("tracking_data", Context.MODE_PRIVATE)
 
     val ids = arrayListOf<Long>()
 
@@ -109,6 +112,38 @@ class ImageVectorUseCase(
     private val currentPeriodIntervals: MutableList<IntervalCounts> = mutableListOf()
     private val pendingIntervals: MutableList<IntervalCounts> = mutableListOf()
 
+    // Save pending intervals when app goes to background
+    private fun savePendingData() {
+        val allPendingData = (pendingIntervals + currentPeriodIntervals).toList()
+        val json = Gson().toJson(allPendingData)
+        prefs.edit().putString("pending_intervals", json).apply()
+        Log.d("PDFTracking", "💾 Saved ${allPendingData.size} pending intervals to storage")
+    }
+
+    // Load pending intervals when app starts
+    private fun loadPendingData(): List<IntervalCounts> {
+        val json = prefs.getString("pending_intervals", null)
+        return if (json != null) {
+            try {
+                val type = object : TypeToken<List<IntervalCounts>>() {}.type
+                val loadedData = Gson().fromJson<List<IntervalCounts>>(json, type) ?: emptyList()
+                Log.d("PDFTracking", "📂 Loaded ${loadedData.size} pending intervals from storage")
+                loadedData
+            } catch (e: Exception) {
+                Log.e("PDFTracking", "❌ Error loading pending data: ${e.message}")
+                emptyList()
+            }
+        } else {
+            emptyList()
+        }
+    }
+
+    // Clear saved data when successfully sent
+    private fun clearSavedData() {
+        prefs.edit().remove("pending_intervals").apply()
+        Log.d("PDFTracking", "🗑️ Cleared saved pending intervals")
+    }
+
     fun startTracking(startTime: Long = System.currentTimeMillis()) {
         sessionStartTime = startTime
         currentIntervalStart = sessionStartTime
@@ -120,7 +155,17 @@ class ImageVectorUseCase(
         globalAllSeen.clear()
         currentIntervalNewFaces.clear()
         currentIntervalReenteredFaces.clear()
-        currentPeriodIntervals.clear() // Clear previous period data
+        currentPeriodIntervals.clear()
+
+        // 🚨 CRITICAL: Load pending data from storage when starting new session
+        if (pendingIntervals.isEmpty()) {
+            val loadedData = loadPendingData()
+            pendingIntervals.addAll(loadedData)
+            if (loadedData.isNotEmpty()) {
+                Log.d("PDFTracking", "🔄 Restored ${loadedData.size} pending intervals from storage")
+            }
+        }
+
         intervalPersonSets[currentIntervalStart] = mutableSetOf()
 
         // Print initial table header
@@ -129,13 +174,14 @@ class ImageVectorUseCase(
     }
 
     fun stopTracking() {
+        savePendingData()
         intervalPersonSets.clear()
         globalAllSeen.clear()
         sessionStartTime = 0L
         runningTotalNewArrivals = 0
         totalPeopleSeenCumulative = 0
         currentPeriodIntervals.clear()
-        pendingIntervals.clear()
+        // pendingIntervals.clear()
     }
 
     private fun getIntervalStart(time: Long): Long {
@@ -255,6 +301,7 @@ class ImageVectorUseCase(
 
         Log.d("PDFTracking", "🆕 Started new interval: ${formatTime(currentIntervalStart)}")
 
+        savePendingData()
         // Check for new tracking period (5 minutes completed)
         val periodEndTime = sessionStartTime + trackingPeriodMillis
         if (currentIntervalStart >= periodEndTime) {
@@ -266,7 +313,10 @@ class ImageVectorUseCase(
             // Print footer for completed period
             DataTableLogger.printTableFooter(totalPeopleSeenCumulative, runningTotalNewArrivals)
 
-            sendPeriodData(viewModel, periodStartTime, periodEndTimeLocal, currentPeriodIntervals.toList())
+            // 🚨 Only send if we have pending intervals OR current intervals
+            if (pendingIntervals.isNotEmpty() || currentPeriodIntervals.isNotEmpty()) {
+                sendPeriodData(viewModel, periodStartTime, periodEndTimeLocal, currentPeriodIntervals.toList())
+            }
             // 🧹 COMPLETELY RESET ALL TRACKING VARIABLES
             Log.d("PDFTracking", "🧹 CLEARING ALL DATA FOR FRESH START...")
             Log.d("PDFTracking", "🎊 NEW TRACKING PERIOD STARTED AT ${formatTime(sessionStartTime)}")
@@ -289,25 +339,41 @@ class ImageVectorUseCase(
         if (success) {
             pendingIntervals.clear()
             currentPeriodIntervals.clear()
+            clearSavedData() // Clear saved data too
             viewModel.resetAllFaceCounts()
             // Reset all tracking variables
-            totalPeopleSeenCumulative = 0
-            tableHeaderPrinted = false
-            runningTotalNewArrivals = 0
-            globalAllSeen.clear()
-            previousIntervalPersons = emptySet()
-            sessionStartTime = currentIntervalStart
-            currentIntervalStart = sessionStartTime
-            intervalPersonSets.clear()
-            currentIntervalNewFaces.clear()
-            currentIntervalReenteredFaces.clear()
+            resetTrackingForNewPeriod()
             // Initialize new interval set
             intervalPersonSets[currentIntervalStart] = mutableSetOf()
             Log.d("PDFTracking", "✅ Successfully sent ${allIntervals.size} intervals to API")
         } else {
-            pendingIntervals.addAll(intervals)
-            Log.e("PDFTracking", "❌ Failed to send intervals, added to pending")
+            Log.e("PDFTracking", "❌ API call failed, saving ${allIntervals.size} intervals to storage")
+
+            pendingIntervals.clear()
+            pendingIntervals.addAll(allIntervals)
+            savePendingData() // Save to persistent storage
+            resetTrackingForNewPeriod()
+            Log.d("PDFTracking", "📦 Pending intervals count: ${pendingIntervals.size}")
         }
+        // Always clear currentPeriodIntervals to prevent duplicates
+        currentPeriodIntervals.clear()
+    }
+
+    private fun resetTrackingForNewPeriod() {
+        totalPeopleSeenCumulative = 0
+        tableHeaderPrinted = false
+        sessionStartTime = currentIntervalStart
+        currentIntervalStart = sessionStartTime
+        intervalPersonSets.clear()
+        currentIntervalNewFaces.clear()
+        currentIntervalReenteredFaces.clear()
+
+        // Initialize new interval set
+        intervalPersonSets[currentIntervalStart] = mutableSetOf()
+
+        // Print header for new period
+        DataTableLogger.printTableHeader()
+        tableHeaderPrinted = true
     }
 
     private fun computeIntervalGenderCounts(persons: Set<Long>): GenderCounts {

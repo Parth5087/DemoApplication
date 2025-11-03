@@ -232,7 +232,17 @@ class AnalyticsRepository(private val context: Context) {
         deviceId: String,
         cameraName: String = ""
     ): BatchData {
-        val allIntervals = intervals
+
+        // 1. FIRST, filter and validate intervals properly
+        val validIntervals = intervals.distinctBy {
+            "${it.batchId}_${it.batchStartTime}_${it.batchEndTime}"
+        }.filter {
+            it.batchId != null &&
+                    it.batchStartTime.isNotBlank() &&
+                    it.batchEndTime.isNotBlank()
+        }
+
+        val allIntervals = validIntervals
         var startedAt: String
         var endAt: String
 
