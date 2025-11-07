@@ -2,9 +2,7 @@ package com.uav.analytics.domain.analytics
 
 import android.content.Context
 import com.uav.analytics.data.FaceImageRecord
-import com.uav.analytics.data.PersonRecord
 import com.uav.analytics.data.FaceImageRecord_
-import com.uav.analytics.data.PersonRecord_
 import com.uav.analytics.data.ObjectBoxStore
 import com.uav.analytics.domain.ImageVectorUseCase
 import io.objectbox.kotlin.boxFor
@@ -18,7 +16,6 @@ import kotlin.math.min
 class AnalyticsRepository(private val context: Context) {
 
     private val faceBox = ObjectBoxStore.store.boxFor<FaceImageRecord>()
-    private val personBox = ObjectBoxStore.store.boxFor<PersonRecord>()
 
     // Format used in earlier code: yyyy-MM-dd HH:mm:ss (Indian timezone)
     private val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).apply {
@@ -378,24 +375,4 @@ class AnalyticsRepository(private val context: Context) {
         return idsList.size
     }
 
-    /** Remove person records whose addTime is within [fromMillis, toMillis]. */
-    fun removePersonRecordsInWindow(fromMillis: Long, toMillis: Long): Int {
-        val idsPrimitive: LongArray = personBox.query {
-            between(PersonRecord_.addTime, fromMillis, toMillis)
-        }.findIds()
-
-        if (idsPrimitive.isEmpty()) return 0
-
-        val idsList: List<Long> = idsPrimitive.toList()
-        personBox.removeByIds(idsList)
-        return idsList.size
-    }
-
-    /**
-     * Aggressive: remove all face image records and (optionally) all person records.
-     */
-    fun clearAllStoredData(removePersonsToo: Boolean = false) {
-        faceBox.removeAll()
-        if (removePersonsToo) personBox.removeAll()
-    }
 }

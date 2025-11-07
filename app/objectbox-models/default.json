@@ -60,35 +60,6 @@
         }
       ],
       "relations": []
-    },
-    {
-      "id": "2:5322169677917956621",
-      "lastPropertyId": "5:8959763366979704799",
-      "name": "PersonRecord",
-      "properties": [
-        {
-          "id": "1:1297539862110468859",
-          "name": "personID",
-          "type": 6,
-          "flags": 1
-        },
-        {
-          "id": "2:8860051751103225530",
-          "name": "personName",
-          "type": 9
-        },
-        {
-          "id": "3:3130818954237790052",
-          "name": "numImages",
-          "type": 6
-        },
-        {
-          "id": "4:200102630707254336",
-          "name": "addTime",
-          "type": 6
-        }
-      ],
-      "relations": []
     }
   ],
   "lastEntityId": "2:5322169677917956621",
@@ -97,7 +68,9 @@
   "lastSequenceId": "0:0",
   "modelVersion": 5,
   "modelVersionParserMinimum": 5,
-  "retiredEntityUids": [],
+  "retiredEntityUids": [
+    5322169677917956621
+  ],
   "retiredIndexUids": [
     3740748471272127177
   ],
@@ -105,7 +78,11 @@
     765445784482171042,
     7337348671201050260,
     8959763366979704799,
-    3754897387831098616
+    3754897387831098616,
+    1297539862110468859,
+    8860051751103225530,
+    3130818954237790052,
+    200102630707254336
   ],
   "retiredRelationUids": [],
   "version": 1

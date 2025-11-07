@@ -6,10 +6,8 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.uav.analytics.data.ImagesVectorDB
-import com.uav.analytics.data.PersonDB
 import com.uav.analytics.data.RecognitionMetrics
 import com.uav.analytics.domain.ImageVectorUseCase
-import com.uav.analytics.domain.PersonUseCase
 import com.uav.analytics.domain.analytics.FaceCounts
 import com.uav.analytics.domain.analytics.IntervalCounts
 import com.uav.analytics.domain.embeddings.FaceNet
@@ -17,7 +15,6 @@ import com.uav.analytics.domain.faceDection.FaceSpoofDetector
 import com.uav.analytics.domain.faceDection.MediapipeFaceDetector
 
 class MainActivityViewModel(
-    private val personUseCase: PersonUseCase,
     val imageVectorUseCase: ImageVectorUseCase
 ) : ViewModel() {
 
@@ -54,7 +51,6 @@ class MainActivityViewModel(
         _faceDetectionMetricsState.postValue(metrics)
     }
 
-    fun getNumPeople(): Long = personUseCase.getCount()
 
     fun updateFaceCounts(detectedCount: Int, storedCount: Long) {
         _faceCountsState.postValue(FaceCounts(detectedCount, storedCount))
@@ -90,7 +86,6 @@ class MainActivityViewModel(
 
     fun resetAllFaceCounts() {
         detectedFaceNames.clear()
-        personUseCase.clearAllPeople()
         imageVectorUseCase.clearAllPeople()
         imageVectorUseCase.stopTracking()
         _faceCountsState.postValue(FaceCounts(0, 0))
@@ -116,9 +111,6 @@ class MainActivityViewModelFactory(
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(MainActivityViewModel::class.java)) {
 
-            val personDB = PersonDB(context)
-            val personUseCase = PersonUseCase(personDB)
-
             val imageVectorUseCase = ImageVectorUseCase(
                 mediapipeFaceDetector = MediapipeFaceDetector(context),
                 faceSpoofDetector = FaceSpoofDetector(context),
@@ -127,7 +119,7 @@ class MainActivityViewModelFactory(
                 context
             )
 
-            return MainActivityViewModel(personUseCase, imageVectorUseCase) as T
+            return MainActivityViewModel(imageVectorUseCase) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

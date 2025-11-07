@@ -355,8 +355,6 @@ class ImageVectorUseCase(
             resetTrackingForNewPeriod()
             Log.d("PDFTracking", "📦 Pending intervals count: ${pendingIntervals.size}")
         }
-        // Always clear currentPeriodIntervals to prevent duplicates
-        currentPeriodIntervals.clear()
     }
 
     private fun resetTrackingForNewPeriod() {
@@ -371,6 +369,8 @@ class ImageVectorUseCase(
         // Initialize new interval set
         intervalPersonSets[currentIntervalStart] = mutableSetOf()
 
+        // Always clear currentPeriodIntervals to prevent duplicates
+        currentPeriodIntervals.clear()
         // Print header for new period
         DataTableLogger.printTableHeader()
         tableHeaderPrinted = true
