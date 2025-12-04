@@ -25,7 +25,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.gson.Gson
+import com.uav.analytics.RemoteConfigHelper.saveAllConfigToCache
 import com.uav.analytics.models.ErrorResponse
 import com.uav.analytics.models.RegisterDeviceRequest
 import com.uav.analytics.services.CameraBackgroundService
@@ -131,7 +133,7 @@ class LauncherActivity : AppCompatActivity() {
         val btnSave = dialogView.findViewById<Button>(R.id.btn_save)
         val progressBar = dialogView.findViewById<ProgressBar>(R.id.progressBar) // Add this to your dialog layout
 
-        val dialog = AlertDialog.Builder(this)
+        val dialog = MaterialAlertDialogBuilder(this,R.style.CameraIdDialogTheme)
             .setTitle("Device ID: $androidId")
             .setView(dialogView)
             .setCancelable(false)
@@ -230,7 +232,7 @@ class LauncherActivity : AppCompatActivity() {
                 Log.d(TAG, "RemoteConfig background task completed - finishing activity")
                 finish()
             }
-        }, 2000)
+        }, 10000)
     }
 
     private fun getCachedDestination(): String {
@@ -285,9 +287,12 @@ class LauncherActivity : AppCompatActivity() {
             Log.d(TAG, "RemoteConfig fetch completed - success: $success")
 
             if (success) {
+                val newConfigValues = RemoteConfigHelper.getAllConfigValues()
                 val newDestination = RemoteConfigHelper.startDestination()
                 Log.d(TAG, "RemoteConfig destination: $newDestination")
 
+                // Save ALL config values to cache
+                saveAllConfigToCache(newConfigValues)
                 val oldDestination = getCachedDestination()
 
                 // Update cache for next launch

@@ -240,18 +240,20 @@ class AnalyticsRepository(private val context: Context) {
         }
 
         val allIntervals = validIntervals
-        var startedAt: String
-        var endAt: String
+        // FIX: Use the actual batch times from the intervals instead of calculating min/max
+        // This preserves the original dates for each batch
+        val startedAt: String
+        val endAt: String
 
-        try {
-            val minStartTime = allIntervals.minOf { fullTimeParser.parse(it.batchStartTime).time }
-            val maxEndTime = allIntervals.maxOf { fullTimeParser.parse(it.batchEndTime).time }
-            startedAt = fullTimeFormatter.format(Date(minStartTime))
-            endAt = fullTimeFormatter.format(Date(maxEndTime))
-        } catch (e: Exception) {
-            // Fallback to current time if parsing fails
+        if (allIntervals.isNotEmpty()) {
+            // Use the first interval's start time and last interval's end time
+            // This maintains chronological order without distorting dates
+            startedAt = allIntervals.first().batchStartTime
+            endAt = allIntervals.last().batchEndTime
+        } else {
+            // Fallback to current time if no intervals
             val currentTime = System.currentTimeMillis()
-            startedAt = fullTimeFormatter.format(Date(currentTime - 5 * 60 * 1000)) // 5 minutes ago
+            startedAt = fullTimeFormatter.format(Date(currentTime - 5 * 60 * 1000))
             endAt = fullTimeFormatter.format(Date(currentTime))
         }
 

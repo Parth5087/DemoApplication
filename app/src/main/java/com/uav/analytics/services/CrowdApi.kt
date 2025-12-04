@@ -1,11 +1,11 @@
 package com.uav.analytics.services
 
-import com.uav.analytics.domain.ImageVectorUseCase
 import com.uav.analytics.domain.analytics.BatchData
 import com.uav.analytics.domain.analytics.HourlyPayload
 import com.uav.analytics.models.DeviceStatusRequest
 import com.uav.analytics.models.RegisterDeviceRequest
 import com.uav.analytics.models.RegisterDeviceResponse
+import com.uav.analytics.utils.NetworkCameraLogger
 import okhttp3.MultipartBody
 import okhttp3.ResponseBody
 import retrofit2.Response
@@ -42,5 +42,10 @@ interface CrowdApi {
     @POST("store-device-status")
     suspend fun deviceStatus(
         @Body request: DeviceStatusRequest
+    ): Response<RegisterDeviceResponse>
+
+    @POST("store-logs")
+    suspend fun storeLogs(
+        @Body request: NetworkCameraLogger.ConnectionLogPayload
     ): Response<RegisterDeviceResponse>
 }

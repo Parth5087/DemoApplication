@@ -1,5 +1,6 @@
 package com.uav.analytics.services
 
+import android.util.Log
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -7,8 +8,8 @@ import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
 
 object NetworkModule {
-    private const val BASE_URL_AUTO_PHOTO = "http://analytics.untitledad.in/api/"
-    private const val BASE_URL_LIVE_DETECT = "http://analytics.untitledad.in/api/"
+    private const val BASE_URL_AUTO_PHOTO = "https://analytics.untitledad.in/api/"
+    private const val BASE_URL_LIVE_DETECT = "https://analytics.untitledad.in/api/"
 
     @Volatile private var baseUrl: String = BASE_URL_AUTO_PHOTO
     @Volatile private var retrofitRef: Retrofit? = null
@@ -24,7 +25,16 @@ object NetworkModule {
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
+            .addInterceptor(provideLoggingInterceptor())
             .build()
+    }
+
+    private fun provideLoggingInterceptor(): HttpLoggingInterceptor {
+        return HttpLoggingInterceptor { message ->
+            Log.d("--API--", message)
+        }.apply {
+            level = HttpLoggingInterceptor.Level.BODY // This will log headers, body, etc.
+        }
     }
 
     private fun buildRetrofit(url: String): Retrofit =

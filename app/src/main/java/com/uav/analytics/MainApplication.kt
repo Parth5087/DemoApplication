@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import android.os.Process
+import com.uav.analytics.utils.NetworkCameraLogger
 import kotlin.system.exitProcess
 
 class MainApplication : Application() {
@@ -24,6 +25,7 @@ class MainApplication : Application() {
         // consider a window to treat crashes as "consecutive" (ms). Example: 10 minutes
         private const val CRASH_WINDOW_MS = 10 * 60 * 1000L
         private const val MAX_RESTARTS = 3
+        lateinit var networkCameraLogger: NetworkCameraLogger
     }
 
     private val prefs by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
@@ -41,6 +43,10 @@ class MainApplication : Application() {
         FirebaseApp.initializeApp(this)
         FirebaseCrashlytics.getInstance().isCrashlyticsCollectionEnabled = true
         FirebaseCrashlytics.getInstance().sendUnsentReports()
+
+        networkCameraLogger = NetworkCameraLogger(this)
+        networkCameraLogger.initializeNetworkMonitoring()
+        networkCameraLogger.startPeriodicUpload()
 
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             // background init: RemoteConfig fetch, model warm-up, etc.

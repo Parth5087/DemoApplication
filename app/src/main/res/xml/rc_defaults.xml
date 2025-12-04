@@ -8,6 +8,7 @@
 
     <!-- Upload data time (1 hour = 3600 sec) -->
     <entry key="upload_interval_sec_data" value="3600" />
+    <entry key="interval_time" value="300" />
 
     <!-- Delete record time (1 minute) -->
     <entry key="delete_record_time" value="180" />

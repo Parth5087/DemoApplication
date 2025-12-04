@@ -1,4 +1,4 @@
-package com.uav.analytics
+package com.uav.analytics.receivers
 
 import android.content.BroadcastReceiver
 import android.content.Context

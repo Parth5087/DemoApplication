@@ -32,6 +32,7 @@ import com.uav.analytics.MainActivityViewModelFactory
 import com.uav.analytics.RemoteConfigHelper
 import com.uav.analytics.domain.analytics.AggregatesSender
 import com.uav.analytics.models.DeviceStatusRequest
+import com.uav.analytics.utils.NetworkCameraLogger
 import kotlinx.coroutines.*
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
@@ -64,6 +65,8 @@ class LiveCameraDetectService : LifecycleService() {
     private var previewSurfaceTexture: SurfaceTexture? = null
     private var previewSurface: Surface? = null
     private val previewProviderExecutor = Executors.newSingleThreadExecutor()
+    // ---------- NetworkCameraLogger ----------
+    private lateinit var networkCameraLogger: NetworkCameraLogger
 
     // ---------- Reused buffers ----------
     private var nv21Buf: ByteArray? = null
@@ -98,6 +101,7 @@ class LiveCameraDetectService : LifecycleService() {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     Log.i(TAG, "Screen turned off - stopping camera")
+                    networkCameraLogger.logCameraDisconnect(cameraId, "Screen turned off")
                     cleanupCamera()
                 }
                 Intent.ACTION_SCREEN_ON -> {
@@ -133,6 +137,7 @@ class LiveCameraDetectService : LifecycleService() {
                     val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
                     if (device != null && isUsbCamera(device)) {
                         Log.i(TAG, "USB camera detached -> cleaning up camera resources")
+                        networkCameraLogger.logCameraDisconnect(cameraId, "USB camera detached: ${device.deviceName}")
                         cleanupCamera()
                     }
                 }
@@ -195,6 +200,9 @@ class LiveCameraDetectService : LifecycleService() {
         super.onCreate()
         Log.d(TAG, "onCreate: Service created")
 
+        // Initialize NetworkCameraLogger
+        networkCameraLogger = NetworkCameraLogger(this)
+
         // Initialize device and camera IDs
         val prefs = getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
         deviceId = getAndroidId(this) ?: "Unavailable"
@@ -249,7 +257,7 @@ class LiveCameraDetectService : LifecycleService() {
                 lifecycleScope.launch(Dispatchers.Main) {
                     startCameraHeadless()
                 }
-            }, 10000)
+            }, 25000)
         }
 
         Log.d(TAG, "Service onCreate completed")
@@ -377,6 +385,7 @@ class LiveCameraDetectService : LifecycleService() {
         if (!isDeviceStatusActive) {
             isDeviceStatusActive = true
             lifecycleScope.launch {
+                networkCameraLogger.logCameraConnect(cameraId, "Camera connected")
                 sendDeviceStatus(STATUS_ACTIVE)
             }
         }
@@ -386,6 +395,7 @@ class LiveCameraDetectService : LifecycleService() {
         if (isDeviceStatusActive) {
             isDeviceStatusActive = false
             lifecycleScope.launch {
+                networkCameraLogger.logCameraDisconnect(cameraId, "Camera disconnected")
                 sendDeviceStatus(STATUS_INACTIVE)
             }
         }
@@ -596,6 +606,7 @@ class LiveCameraDetectService : LifecycleService() {
                         cancelScheduledReinit()
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to bind to camera $index: ${e.message}")
+                        networkCameraLogger.logCameraDisconnect(cameraId, "Camera disconnected")
                     } finally {
                         bindInProgress.set(false)
                     }
@@ -607,11 +618,13 @@ class LiveCameraDetectService : LifecycleService() {
 
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to prepare bind to camera $index: ${e.message}")
+                networkCameraLogger.logCameraDisconnect(cameraId, "Camera disconnected")
                 bindInProgress.set(false)
             }
         }
 
         Log.e(TAG, "All camera binding attempts failed - scheduling retry")
+        networkCameraLogger.logCameraDisconnect(cameraId, "Camera disconnected")
         scheduleRetry()
     }
 
@@ -949,6 +962,7 @@ class LiveCameraDetectService : LifecycleService() {
             Log.d(TAG, "Camera resources cleaned up")
         } catch (e: Exception) {
             Log.w(TAG, "cleanupCamera exception: ${e.message}")
+            networkCameraLogger.logCameraDisconnect(cameraId, "Camera disconnected")
         } finally {
             imageAnalysis = null
             cameraProvider = null

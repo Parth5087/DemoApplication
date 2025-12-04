@@ -41,6 +41,7 @@ import kotlin.time.DurationUnit
 import kotlin.time.measureTimedValue
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import java.util.TimeZone
 
 class ImageVectorUseCase(
     val mediapipeFaceDetector: MediapipeFaceDetector,
@@ -365,6 +366,13 @@ class ImageVectorUseCase(
         intervalPersonSets.clear()
         currentIntervalNewFaces.clear()
         currentIntervalReenteredFaces.clear()
+
+        // Reset previous interval persons
+        previousIntervalPersons = emptySet()
+
+        // Reset global tracking for new period
+        globalAllSeen.clear()
+        runningTotalNewArrivals = 0
 
         // Initialize new interval set
         intervalPersonSets[currentIntervalStart] = mutableSetOf()

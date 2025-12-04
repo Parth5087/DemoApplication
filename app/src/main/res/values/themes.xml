@@ -4,6 +4,9 @@
         <!-- Customize your light theme here. -->
         <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
         <item name="android:forceDarkAllowed" tools:targetApi="q">false</item>
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorOnPrimary">@color/white</item>
+        <item name="colorOnSecondary">@color/black</item>
 
         <!-- Hide status bar and enable full-screen -->
         <item name="android:windowFullscreen">true</item>
@@ -12,6 +15,10 @@
 
         <!-- Optional: Handle display cutouts (notches) for full-screen on modern devices -->
         <item name="android:windowLayoutInDisplayCutoutMode" tools:ignore="NewApi">shortEdges</item>
+    </style>
+
+    <style name="CameraIdDialogTheme" parent="ThemeOverlay.Material3.Dark">
+        <item name="android:windowBackground">@color/dark_background</item>
     </style>
 
     <style name="Theme.UntitledAd" parent="Base.Theme.UntitledAd" />

@@ -16,21 +16,67 @@ android {
         minSdk = 24
         targetSdk = 34
         versionCode = 1
-        versionName = "1.0"
+        versionName = "3.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters.add("arm64-v8a")
+            abiFilters.add("armeabi-v7a")
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file("..\\keystore_untitled.jks")
+            keyAlias = "key0"
+            storePassword = "Untitled@123"
+            keyPassword = "Untitled@123"
+        }
+        getByName("debug") {
+            storeFile = file("..\\keystore_untitled.jks")
+            keyAlias = "key0"
+            storePassword = "Untitled@123"
+            keyPassword = "Untitled@123"
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            isCrunchPngs = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
+        }
+        debug {
+            isMinifyEnabled = false
+            isShrinkResources = false
+            // Optional: For faster debug builds, use only one architecture
+            ndk {
+                abiFilters.clear()
+                abiFilters.add("arm64-v8a")
+            }
+        }
+        // Add this to customize APK names
+        applicationVariants.all {
+            val variant = this
+            variant.outputs
+                .map { it as com.android.build.gradle.internal.api.BaseVariantOutputImpl }
+                .forEach { output ->
+                    val outputFileName = "AdFlux-${variant.name}-${variant.versionName}.apk"
+                    output.outputFileName = outputFileName
+                }
         }
     }
-    buildFeatures { buildConfig = true }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
@@ -57,19 +103,16 @@ dependencies {
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
 
-    implementation(libs.tensorflow.lite)
+    // TensorFlow Lite
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
     implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
     implementation("com.google.mediapipe:tasks-vision:0.10.14")
 
-    // ML Kit Face Detection
+    // ML Kit
     implementation(libs.mlkit.face.detection)
     implementation(libs.mlkit.vision.common)
-
-    implementation("org.tensorflow:tensorflow-lite-task-vision:0.4.4")
     implementation("com.google.mlkit:object-detection:17.0.2")
-    implementation("com.google.mlkit:object-detection-custom:17.0.2")
-    // ML Kit Pose Detection
     implementation("com.google.mlkit:pose-detection:18.0.0-beta5")
     implementation("com.google.mlkit:pose-detection-accurate:18.0.0-beta5")
 
@@ -78,23 +121,26 @@ dependencies {
     implementation(libs.androidx.window)
     implementation(libs.litert.gpu.api)
 
-    testImplementation(libs.junit)
-    androidTestImplementation(libs.androidx.junit)
-    androidTestImplementation(libs.androidx.espresso.core)
-    implementation("androidx.activity:activity-ktx:1.7.1")
-
+    // ObjectBox
     implementation("io.objectbox:objectbox-kotlin:4.0.2")
     kapt("io.objectbox:objectbox-processor:4.0.2")
 
-    implementation ("com.github.bumptech.glide:glide:4.15.1")
+    // Image Loading
+    implementation("com.github.bumptech.glide:glide:4.15.1")
+    kapt("com.github.bumptech.glide:compiler:4.15.1")
 
+    // Network
     implementation("com.jakewharton.retrofit:retrofit2-kotlin-coroutines-adapter:0.9.2")
-    implementation("com.squareup.retrofit2:retrofit:2.8.1")
-    implementation("com.squareup.retrofit2:converter-gson:2.8.1")
-    implementation("com.google.code.gson:gson:2.8.8")
-    implementation("androidx.work:work-runtime-ktx:2.7.1")
-    implementation("com.squareup.okhttp3:okhttp:4.11.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.11.0")
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+    implementation("com.google.code.gson:gson:2.10.1")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+
+    // Work Manager
+    implementation("androidx.work:work-runtime-ktx:2.8.1")
+
+    // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
 
     // Firebase BoM (manages versions automatically)

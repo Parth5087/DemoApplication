@@ -4,11 +4,13 @@ import android.content.Context
 import android.util.Log
 import com.uav.analytics.services.NetworkModule
 import com.google.gson.Gson
+import com.uav.analytics.utils.NetworkCameraLogger
 
 class AggregatesSender(private val context: Context) {
 
     private val repo = AnalyticsRepository(context)
     private val gson = Gson()
+    private val networkCameraLogger = NetworkCameraLogger(context)
 
     /**
      * Send hourly payload containing per-minute batches + totals.
@@ -92,10 +94,27 @@ class AggregatesSender(private val context: Context) {
                 true
             } else {
                 val errorBody = resp.errorBody()?.string()
+                // Log API call failure
+                networkCameraLogger.logApiCallFailure(
+                    "store-analytics-data",
+                    errorCode = resp.code(),
+                    errorMessage = resp.message(),
+                    details = "Failed to send batch data for ${intervals.size} intervals " +
+                            "Device: $deviceId, Camera: $cameraID. " +
+                            "Error Body: $errorBody"
+                )
                 Log.e("AggregatesSender", "❌ ${if (isRetry) "Retry " else ""}Failed to send batch data: ${resp.code()} - $errorBody")
                 false
             }
         } catch (e: Exception) {
+            // Log API call exception
+            networkCameraLogger.logApiCallFailure(
+                "store-analytics-data",
+                errorMessage = e.message ?: "Unknown exception",
+                details = "Exception while sending batch data for ${intervals.size} intervals " +
+                        "Device: $deviceId, Camera: $cameraID. " +
+                        "Exception: ${e.javaClass.simpleName}"
+            )
             Log.e("AggregatesSender", "Failed to send batch data", e)
             false
         }
